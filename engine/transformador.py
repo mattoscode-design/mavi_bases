@@ -1,6 +1,14 @@
 import re
 import pandas as pd
-from engine.matcher import identificar_loja, buscar_setor_por_ean
+from engine.matcher import (
+    buscar_setor_por_ean,
+    carregar_cache,
+    carregar_cache_varejistas,
+    carregar_setores_por_ean,
+    identificar_loja,
+    normalizar,
+    salvar_aliases,
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -143,23 +151,22 @@ def cruzar_loja(df: pd.DataFrame, cfg: dict, cod_varejista: int) -> tuple:
     col_id_direto = cfg.get("coluna_id_direto")
     col_matricula = cfg.get("coluna_matricula")
     col_nome = cfg.get("coluna_nome")
-    col_original = col_id_direto or col_matricula
+    col_original = col_id_direto or col_matricula or col_nome
 
     nomes_banco = []
     ids_pendentes = set()
+    novos_aliases = set()
+    cache = carregar_cache(cod_varejista)
 
-    for _, row in df.iterrows():
-        id_direto = (
-            row.get(col_id_direto)
-            if col_id_direto and col_id_direto in df.columns
-            else None
-        )
-        matricula = (
-            row.get(col_matricula)
-            if col_matricula and col_matricula in df.columns
-            else None
-        )
-        nome_pdv = row.get(col_nome, "") if col_nome and col_nome in df.columns else ""
+    cols = list(df.columns)
+    idx_id_direto = cols.index(col_id_direto) if col_id_direto in cols else None
+    idx_matricula = cols.index(col_matricula) if col_matricula in cols else None
+    idx_nome = cols.index(col_nome) if col_nome in cols else None
+
+    for row in df.itertuples(index=False, name=None):
+        id_direto = row[idx_id_direto] if idx_id_direto is not None else None
+        matricula = row[idx_matricula] if idx_matricula is not None else None
+        nome_pdv = row[idx_nome] if idx_nome is not None else ""
 
         # captura id original de forma segura
         id_original = None
@@ -173,11 +180,19 @@ def cruzar_loja(df: pd.DataFrame, cfg: dict, cod_varejista: int) -> tuple:
             id_original = str(matricula).strip()
 
         resultado = identificar_loja(
-            matricula, nome_pdv, cod_varejista, id_direto=id_direto
+            matricula,
+            nome_pdv,
+            cod_varejista,
+            id_direto=id_direto,
+            cache=cache,
         )
 
         if resultado["encontrado"]:
             nomes_banco.append(resultado["nome_loja"])
+            if resultado["estrategia"] in ("cluster_9", "numero_no_nome") and nome_pdv:
+                novos_aliases.add(
+                    (cod_varejista, normalizar(nome_pdv), resultado["id_loja"])
+                )
         else:
             nomes_banco.append("NÃO ENCONTRADO")
             chave_pend = f"{id_original}|{nome_pdv}"
@@ -197,11 +212,12 @@ def cruzar_loja(df: pd.DataFrame, cfg: dict, cod_varejista: int) -> tuple:
                     }
                 )
 
-    # renomeia coluna original para LOJA (mantém o valor que veio da base)
+    if novos_aliases:
+        salvar_aliases(cod_varejista, list(novos_aliases))
+
     if col_original and col_original in df.columns and col_original != saida_id:
         df.rename(columns={col_original: saida_id}, inplace=True)
 
-    # adiciona coluna BANCO com nome do banco
     df[saida_nome] = nomes_banco
 
     return df, pendencias, saida_id
@@ -227,14 +243,64 @@ def cruzar_ean(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
         saida_setor = "SETOR_PRODUTO"
 
     if col_ean_real:
+        valores = df[col_ean_real].astype(str).fillna("").str.strip()
+        unicos = set(valores[valores != ""].unique())
+        cache = carregar_setores_por_ean(unicos)
 
         def buscar(ean):
-            resultado = buscar_setor_por_ean(ean)
-            return resultado if resultado else "NÃO IDENTIFICADO"
+            if not ean or str(ean).strip() == "":
+                return ""
+            return cache.get(str(ean).strip(), "NÃO IDENTIFICADO")
 
-        df[saida_setor] = df[col_ean_real].apply(buscar)
+        df[saida_setor] = valores.map(buscar)
 
     return df
+
+
+def cruzar_varejista(df: pd.DataFrame, cfg: dict) -> tuple:
+    """
+    Lê coluna de varejista da base, cruza com banco e cria coluna de saída.
+    Varejistas não encontrados ficam marcados como 'NÃO ENCONTRADO' e são
+    retornados como lista de pendências de varejista.
+
+    cfg = {
+        "coluna_entrada": str,
+        "saida": str  (padrão "VAREJISTA_BANCO"),
+        "permitidos": set[int]  (cod_varejista; vazio = aceita todos)
+    }
+    Retorna (df, lista_novos)
+    """
+    col_entrada = cfg.get("coluna_entrada")
+    saida = cfg.get("saida", "VAREJISTA_BANCO")
+    permitidos = cfg.get("permitidos", set())
+
+    if not col_entrada or col_entrada not in df.columns:
+        return df, []
+
+    cache = carregar_cache_varejistas()
+    if permitidos:
+        cache = {k: v for k, v in cache.items() if v["cod"] in permitidos}
+
+    nomes_saida = []
+    novos = []
+    vistos = set()
+
+    for val in df[col_entrada].astype(str).str.strip():
+        if val in ("", "nan", "None"):
+            nomes_saida.append("")
+            continue
+        norm = normalizar(val)
+        match = cache.get(norm)
+        if match:
+            nomes_saida.append(match["nome"])
+        else:
+            nomes_saida.append("NÃO ENCONTRADO")
+            if val not in vistos:
+                vistos.add(val)
+                novos.append(val)
+
+    df[saida] = nomes_saida
+    return df, novos
 
 
 def renomear_colunas(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:

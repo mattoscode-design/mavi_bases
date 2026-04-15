@@ -3,18 +3,23 @@ import pandas as pd
 import shutil
 import os
 import threading
+import tkinter as tk
+from tkinter import filedialog
 from ui import tema
 from engine.conexao import get_conexao
 from config import PASTA_ENTRADA
 
 TIPOS_ACAO = [
-    ("id_loja", "🏪 É o ID da loja"),
+    ("id_loja", "🏪 ID da loja (id_loja)"),
+    ("matricula_loja", "🧾 Matrícula / Código da loja"),
+    ("nome_loja", "🏷️ Nome do PDV"),
     ("renomear", "✏️  Renomear coluna"),
     ("cruzar_ean", "🔍 Cruzar EAN com banco"),
     ("separar_mes_ano", "📅 Separar MÊS e ANO"),
     ("calcular_quantidade", "🧮 Calcular QUANTIDADE"),
     ("manter", "✅ Manter como está"),
     ("ignorar", "❌ Ignorar coluna"),
+    ("cruzar_varejista", "🏬 Cruzar varejista"),
 ]
 
 
@@ -38,7 +43,7 @@ def carregar_mapeamento(cod_varejista: int) -> dict:
         conn = get_conexao()
         cursor = conn.cursor(dictionary=True)
         cursor.execute(
-            "SELECT coluna_entrada, coluna_saida, tipo_acao FROM mapeamento_colunas "
+            "SELECT coluna_entrada, coluna_saida, tipo_acao, formula FROM mapeamento_colunas "
             "WHERE cod_varejista = %s ORDER BY ordem",
             (cod_varejista,),
         )
@@ -117,27 +122,34 @@ def tela_mapeamento(page: ft.Page, banco: str, on_voltar):
         bgcolor=tema.BG3,
         border=ft.border.all(1.5, tema.BORDER),
         border_radius=12,
-        alignment=ft.alignment.center,
-        on_click=lambda e: file_picker.pick_files(
-            allowed_extensions=["xlsx", "xls"],
-            dialog_title="Selecionar base de exemplo",
-        ),
+        alignment=ft.alignment.Alignment.CENTER,
+        on_click=lambda e: arquivo_selecionado(),
         ink=True,
     )
 
     txt_erro = ft.Text("", color=tema.DANGER, size=13, visible=False)
     btn_ler = tema.btn_primario("Ler colunas →", largura=400)
 
-    def arquivo_selecionado(e: ft.FilePickerResultEvent):
-        if e.files:
-            arquivo_path[0] = e.files[0].path
-            txt_arquivo.value = e.files[0].name
+    def abrir_seletor_arquivo():
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        caminho = filedialog.askopenfilename(
+            filetypes=[("Excel files", "*.xlsx *.xls")],
+            title="Selecionar base de exemplo",
+        )
+        root.destroy()
+        return caminho
+
+    def arquivo_selecionado():
+        caminho = abrir_seletor_arquivo()
+        if caminho:
+            arquivo_path[0] = caminho
+            txt_arquivo.value = os.path.basename(caminho)
             txt_arquivo.color = tema.TEAL
             area_arquivo.border = ft.border.all(1.5, tema.TEAL)
             page.update()
 
-    file_picker = ft.FilePicker(on_result=arquivo_selecionado)
-    page.overlay.append(file_picker)
     page.update()
 
     def ler_colunas(e):
@@ -227,8 +239,56 @@ def _abrir_configurador(
 ):
     """Tela de configuração das colunas."""
 
-    controles_col = []  # (dropdown_acao, input_saida) por coluna
+    todos_varejistas = buscar_varejistas()
+    controles_col = []  # (col, dd_acao, inp_saida, inp_formula, btn_varejistas)
     novas_colunas = []  # colunas novas adicionadas pelo usuário
+
+    def _abrir_picker_varejistas(inp_formula_ref, btn_ref):
+        cod_selecionados = {
+            int(x)
+            for x in (inp_formula_ref.value or "").split("|")
+            if x.strip().isdigit()
+        }
+        checkboxes = [
+            (
+                v["cod_varejista"],
+                ft.Checkbox(
+                    label=v["nome_varejista"],
+                    value=v["cod_varejista"] in cod_selecionados,
+                ),
+            )
+            for v in todos_varejistas
+        ]
+        dlg = [None]
+
+        def _confirmar(e):
+            sels = "|".join(str(cod) for cod, cb in checkboxes if cb.value)
+            inp_formula_ref.value = sels
+            n = sum(1 for _, cb in checkboxes if cb.value)
+            btn_ref.text = f"🏬 {n} var." if n else "🏬 Varejistas"
+            dlg[0].open = False
+            page.update()
+
+        def _cancelar(e):
+            dlg[0].open = False
+            page.update()
+
+        dlg[0] = ft.AlertDialog(
+            title=ft.Text("Varejistas permitidos (vazio = todos)"),
+            content=ft.Column(
+                [cb for _, cb in checkboxes],
+                scroll=ft.ScrollMode.AUTO,
+                height=max(80, min(300, len(checkboxes) * 45)),
+            ),
+            actions=[
+                ft.TextButton("Confirmar", on_click=_confirmar),
+                ft.TextButton("Cancelar", on_click=_cancelar),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.dialog = dlg[0]
+        dlg[0].open = True
+        page.update()
 
     # ── Linhas de colunas existentes ─────────────────────────────────────────
     linhas_cols = []
@@ -261,25 +321,75 @@ def _abrir_configurador(
             border_radius=6,
             dense=True,
             visible=salvo.get("tipo_acao")
-            in ("renomear", "separar_mes_ano", "cruzar_ean"),
+            in (
+                "renomear",
+                "separar_mes_ano",
+                "cruzar_ean",
+                "calcular_quantidade",
+                "cruzar_varejista",
+            ),
         )
 
-        def on_acao_change(e, inp=inp_saida):
+        inp_formula = ft.TextField(
+            value=salvo.get("formula", ""),
+            hint_text="ex: VALOR/Preco Unit",
+            width=180,
+            bgcolor=tema.BG3,
+            border_color=tema.BORDER,
+            focused_border_color=tema.TEAL,
+            text_style=ft.TextStyle(color=tema.TEXT, size=12),
+            border_radius=6,
+            dense=True,
+            visible=salvo.get("tipo_acao") == "calcular_quantidade",
+        )
+
+        _n_var = sum(
+            1 for x in salvo.get("formula", "").split("|") if x.strip().isdigit()
+        )
+        btn_varejistas = ft.ElevatedButton(
+            f"🏬 {_n_var} var." if _n_var else "🏬 Varejistas",
+            visible=salvo.get("tipo_acao") == "cruzar_varejista",
+            style=ft.ButtonStyle(
+                bgcolor=tema.BG3,
+                color=tema.TEAL,
+                shape=ft.RoundedRectangleBorder(radius=6),
+                side=ft.BorderSide(color=tema.TEAL, width=1),
+            ),
+        )
+        btn_varejistas.on_click = (
+            lambda e, _i=inp_formula, _b=btn_varejistas: _abrir_picker_varejistas(
+                _i, _b
+            )
+        )
+
+        def on_acao_change(
+            e, inp=inp_saida, formula_inp=inp_formula, btn_var=btn_varejistas
+        ):
             inp.visible = e.control.value in (
                 "renomear",
                 "separar_mes_ano",
                 "cruzar_ean",
+                "calcular_quantidade",
+                "cruzar_varejista",
             )
+            formula_inp.visible = e.control.value == "calcular_quantidade"
+            btn_var.visible = e.control.value == "cruzar_varejista"
+
             if e.control.value == "separar_mes_ano":
                 inp.hint_text = "ex: MÊS|ANO"
             elif e.control.value == "cruzar_ean":
                 inp.hint_text = "ex: SETOR_PRODUTO"
+            elif e.control.value == "calcular_quantidade":
+                inp.hint_text = "ex: QUANTIDADE"
+                formula_inp.hint_text = "ex: VALOR/Preco Unit"
+            elif e.control.value == "cruzar_varejista":
+                inp.hint_text = "ex: VAREJISTA_BANCO"
             else:
                 inp.hint_text = "novo nome..."
             page.update()
 
         dd_acao.on_change = on_acao_change
-        controles_col.append((col, dd_acao, inp_saida))
+        controles_col.append((col, dd_acao, inp_saida, inp_formula, btn_varejistas))
 
         linhas_cols.append(
             ft.Container(
@@ -302,6 +412,8 @@ def _abrir_configurador(
                         ),
                         dd_acao,
                         inp_saida,
+                        inp_formula,
+                        btn_varejistas,
                     ],
                     spacing=10,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -413,17 +525,22 @@ def _abrir_configurador(
 
     def salvar(e):
         colunas_payload = []
-        for col, dd, inp in controles_col:
+        for col, dd, inp, inp_formula, _ in controles_col:
             tipo = dd.value
+            payload = {
+                "coluna_entrada": col,
+                "coluna_saida": inp.value.strip() if inp.visible else col,
+                "tipo_acao": tipo,
+                "formula": (
+                    inp_formula.value.strip()
+                    if (inp_formula.visible or tipo == "cruzar_varejista")
+                    else ""
+                ),
+            }
             if tipo == "ignorar":
-                continue
-            colunas_payload.append(
-                {
-                    "coluna_entrada": col,
-                    "coluna_saida": inp.value.strip() if inp.visible else col,
-                    "tipo_acao": tipo,
-                }
-            )
+                payload["coluna_saida"] = ""
+                payload["formula"] = ""
+            colunas_payload.append(payload)
         for nova in novas_colunas:
             colunas_payload.append(
                 {
@@ -474,6 +591,9 @@ def _abrir_configurador(
 
     from ui.app_nav import ir_para_controle
 
+    def voltar_para_mapeamento(e):
+        ir_para_controle(page, tela_mapeamento(page, banco, on_voltar_principal))
+
     ir_para_controle(
         page,
         ft.Column(
@@ -481,9 +601,7 @@ def _abrir_configurador(
                 tema.navbar(
                     "Configurar Colunas",
                     banco,
-                    on_voltar=lambda e: tela_mapeamento(
-                        page, banco, on_voltar_principal
-                    ),
+                    on_voltar=voltar_para_mapeamento,
                 ),
                 ft.Container(content=conteudo, expand=True, padding=16),
             ],

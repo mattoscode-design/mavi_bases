@@ -2,7 +2,7 @@ import flet as ft
 from ui import tema
 
 USUARIOS = {
-    "mavi_gabriel": "mavi2025",
+    "mavi_gabriel": "123456",
     "admin": "admin123",
 }
 

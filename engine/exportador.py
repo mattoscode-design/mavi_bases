@@ -1,3 +1,4 @@
+import importlib.util
 import os
 import pandas as pd
 from config import PASTA_SAIDA
@@ -13,21 +14,42 @@ def salvar_excel(df: pd.DataFrame, pendencias: list, nome_varejista: str) -> str
         f"{nome_varejista}_tratado_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     )
     caminho = os.path.join(PASTA_SAIDA, nome_arquivo)
+    engine = "xlsxwriter" if importlib.util.find_spec("xlsxwriter") else "openpyxl"
 
-    with pd.ExcelWriter(caminho, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="BASE_TRATADA")
+    try:
+        with pd.ExcelWriter(caminho, engine=engine) as writer:
+            df.to_excel(writer, index=False, sheet_name="BASE_TRATADA")
 
-        if pendencias:
-            df_pend = pd.DataFrame(pendencias).drop(columns=["chave"])
-            df_pend.rename(
-                columns={
-                    "id_original": "ID DA BASE",
-                    "matricula": "MATRÍCULA",
-                    "nome_pdv": "NOME PDV",
-                    "id_loja": "ID LOJA BANCO",
-                },
-                inplace=True,
-            )
-            df_pend.to_excel(writer, index=False, sheet_name="LOJAS NOVAS")
+            if pendencias:
+                df_pend = pd.DataFrame(pendencias).drop(columns=["chave"])
+                df_pend.rename(
+                    columns={
+                        "id_original": "ID DA BASE",
+                        "matricula": "MATRÍCULA",
+                        "nome_pdv": "NOME PDV",
+                        "id_loja": "ID LOJA BANCO",
+                    },
+                    inplace=True,
+                )
+                df_pend.to_excel(writer, index=False, sheet_name="LOJAS NOVAS")
+    except Exception:
+        if engine == "xlsxwriter":
+            with pd.ExcelWriter(caminho, engine="openpyxl") as writer:
+                df.to_excel(writer, index=False, sheet_name="BASE_TRATADA")
+
+                if pendencias:
+                    df_pend = pd.DataFrame(pendencias).drop(columns=["chave"])
+                    df_pend.rename(
+                        columns={
+                            "id_original": "ID DA BASE",
+                            "matricula": "MATRÍCULA",
+                            "nome_pdv": "NOME PDV",
+                            "id_loja": "ID LOJA BANCO",
+                        },
+                        inplace=True,
+                    )
+                    df_pend.to_excel(writer, index=False, sheet_name="LOJAS NOVAS")
+        else:
+            raise
 
     return nome_arquivo

@@ -35,6 +35,7 @@ def main(page: ft.Page):
         "cod_varejista": None,
         "resultado": None,
         "nome_varejista": "",
+        "pendencias": [],
     }
 
     def ir_para(tela_fn):
@@ -92,6 +93,7 @@ def main(page: ft.Page):
                     page,
                     sessao["cod_varejista"] or 1,
                     sessao["banco"],
+                    sessao.get("pendencias", []),
                     on_voltar=lambda: on_modulo("menu"),
                 )
             )
@@ -108,6 +110,13 @@ def main(page: ft.Page):
         sessao["nome_varejista"] = nome_varejista
         sessao["cod_varejista"] = cod_varejista
 
+        novas_pendencias = resultado.get("pendencias", [])
+        existentes = {p.get("chave") for p in sessao.get("pendencias", [])}
+        sessao["pendencias"] = [
+            *sessao.get("pendencias", []),
+            *[p for p in novas_pendencias if p.get("chave") not in existentes],
+        ]
+
         audit.registrar(
             usuario=sessao["usuario"],
             acao="BASE_PROCESSADA",
@@ -116,7 +125,7 @@ def main(page: ft.Page):
             detalhe=(
                 f"linhas={resultado.get('total_linhas',0)} "
                 f"lojas_ok={resultado.get('lojas_ok',0)} "
-                f"pendencias={len(resultado.get('pendencias',[]))}"
+                f"pendencias={len(novas_pendencias)}"
             ),
         )
 
@@ -136,4 +145,4 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.run(target=main)
+    ft.run(main)
