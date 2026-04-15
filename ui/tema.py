@@ -10,23 +10,9 @@ BORDER = "#333333"
 TEXT = "#e8e8e8"
 TEXT_MUTED = "#888888"
 DANGER = "#e05555"
-SUCCESS = "#00d4b4"
 WARN = "#e0a030"
 
-# ── Tema do app ───────────────────────────────────────────────────────────────
-TEMA = ft.Theme(
-    color_scheme_seed=TEAL,
-    color_scheme=ft.ColorScheme(
-        primary=TEAL,
-        background=BG,
-        surface=BG2,
-        on_primary="#000000",
-        on_background=TEXT,
-        on_surface=TEXT,
-    ),
-)
-
-# ── Helpers de estilo ─────────────────────────────────────────────────────────
+TEMA = ft.Theme(color_scheme_seed=TEAL)
 
 
 def titulo_logo(size: int = 42) -> ft.Text:
@@ -36,7 +22,6 @@ def titulo_logo(size: int = 42) -> ft.Text:
         weight=ft.FontWeight.W_800,
         color=TEAL,
         italic=True,
-        font_family="Segoe UI",
     )
 
 
@@ -51,20 +36,14 @@ def rodape() -> ft.Column:
     )
 
 
-def btn_primario(texto: str, on_click=None, largura: int = 220) -> ft.ElevatedButton:
-    return ft.ElevatedButton(
-        text=texto,
+def btn_primario(texto: str, on_click=None, largura: int = 220) -> ft.FilledButton:
+    return ft.FilledButton(
+        texto,
         on_click=on_click,
         width=largura,
         style=ft.ButtonStyle(
-            color={
-                ft.ControlState.DEFAULT: "#000000",
-                ft.ControlState.HOVERED: "#000000",
-            },
-            bgcolor={
-                ft.ControlState.DEFAULT: TEAL,
-                ft.ControlState.HOVERED: TEAL_DIM,
-            },
+            bgcolor=TEAL,
+            color="#000000",
             shape=ft.RoundedRectangleBorder(radius=20),
             padding=ft.padding.symmetric(vertical=12, horizontal=24),
         ),
@@ -73,18 +52,11 @@ def btn_primario(texto: str, on_click=None, largura: int = 220) -> ft.ElevatedBu
 
 def btn_outline(texto: str, on_click=None, largura: int = 220) -> ft.OutlinedButton:
     return ft.OutlinedButton(
-        text=texto,
+        texto,
         on_click=on_click,
         width=largura,
         style=ft.ButtonStyle(
-            color={
-                ft.ControlState.DEFAULT: TEAL,
-                ft.ControlState.HOVERED: "#000000",
-            },
-            bgcolor={
-                ft.ControlState.DEFAULT: "transparent",
-                ft.ControlState.HOVERED: TEAL,
-            },
+            color=TEAL,
             side=ft.BorderSide(color=TEAL, width=1),
             shape=ft.RoundedRectangleBorder(radius=20),
             padding=ft.padding.symmetric(vertical=12, horizontal=24),
@@ -109,7 +81,7 @@ def campo_texto(label: str, senha: bool = False, valor: str = "") -> ft.TextFiel
     )
 
 
-def dropdown_estilo(label: str, opcoes: list[str], valor: str = "") -> ft.Dropdown:
+def dropdown_estilo(label: str, opcoes: list, valor: str = "") -> ft.Dropdown:
     return ft.Dropdown(
         label=label,
         value=valor or None,
@@ -135,7 +107,6 @@ def card(conteudo: list, padding: int = 20) -> ft.Container:
 
 
 def tela_centralizada(conteudo: list) -> ft.Column:
-    """Layout padrão das telas centralizadas (login, banco, módulos)."""
     return ft.Column(
         [
             ft.Container(expand=True),
@@ -153,17 +124,39 @@ def tela_centralizada(conteudo: list) -> ft.Column:
 
 def snackbar_sucesso(page: ft.Page, msg: str):
     page.snack_bar = ft.SnackBar(
-        content=ft.Text(msg, color="#000000"),
+        ft.Text(msg, color="#000000"),
         bgcolor=TEAL,
+        open=True,
     )
-    page.snack_bar.open = True
     page.update()
 
 
 def snackbar_erro(page: ft.Page, msg: str):
     page.snack_bar = ft.SnackBar(
-        content=ft.Text(msg, color=TEXT),
+        ft.Text(msg, color=TEXT),
         bgcolor=DANGER,
+        open=True,
     )
-    page.snack_bar.open = True
     page.update()
+
+
+def navbar(titulo: str, banco: str, on_voltar=None) -> ft.Container:
+    items = []
+    if on_voltar:
+        items.append(
+            ft.IconButton(
+                ft.Icons.ARROW_BACK,
+                icon_color=TEXT_MUTED,
+                on_click=on_voltar,
+            )
+        )
+    items.append(ft.Text(titulo, size=15, weight=ft.FontWeight.W_500, color=TEXT))
+    items.append(ft.Container(expand=True))
+    items.append(ft.Text(banco, size=12, color=TEXT_MUTED))
+
+    return ft.Container(
+        content=ft.Row(items),
+        bgcolor=BG2,
+        border=ft.border.only(bottom=ft.BorderSide(1, BORDER)),
+        padding=ft.padding.symmetric(horizontal=16, vertical=8),
+    )

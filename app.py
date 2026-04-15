@@ -26,7 +26,6 @@ def main(page: ft.Page):
     page.padding = 0
     page.theme = tema.TEMA
 
-    # limpa arquivos antigos ao iniciar
     limpeza.limpar_entradas_antigas(PASTA_ENTRADA, horas=24)
     limpeza.limpar_saidas_antigas(PASTA_SAIDA, dias=30)
 
@@ -43,23 +42,6 @@ def main(page: ft.Page):
         page.controls.append(tela_fn())
         page.update()
 
-    # ── Intercepta fechamento da janela ───────────────────────────────────────
-    def ao_fechar(e):
-        if sessao["usuario"]:
-            audit.registrar(
-                usuario=sessao["usuario"],
-                acao="LOGOUT",
-                banco=sessao["banco"],
-                detalhe="Janela fechada",
-            )
-        # limpa arquivos temporários ao sair
-        pasta_temp = os.path.join(os.path.dirname(__file__), "temp")
-        limpeza.limpar_temp(pasta_temp)
-
-    page.window.on_event = ao_fechar
-
-    # ── Navegação ─────────────────────────────────────────────────────────────
-
     def para_login():
         ir_para(lambda: tela_login(page, on_login))
 
@@ -69,11 +51,12 @@ def main(page: ft.Page):
         ir_para(lambda: tela_banco(page, usuario, on_banco))
 
     def on_banco(banco: str):
+        if banco == "__voltar__":
+            para_login()
+            return
         sessao["banco"] = banco
         audit.registrar(
-            usuario=sessao["usuario"],
-            acao="BANCO_SELECIONADO",
-            banco=banco,
+            usuario=sessao["usuario"], acao="BANCO_SELECIONADO", banco=banco
         )
         ir_para(lambda: tela_modulos(page, sessao["usuario"], banco, on_modulo))
 
@@ -125,27 +108,17 @@ def main(page: ft.Page):
         sessao["nome_varejista"] = nome_varejista
         sessao["cod_varejista"] = cod_varejista
 
-        # audit log do processamento
         audit.registrar(
             usuario=sessao["usuario"],
             acao="BASE_PROCESSADA",
             varejista=nome_varejista,
             banco=sessao["banco"],
             detalhe=(
-                f"linhas={resultado.get('total_linhas', 0)} "
-                f"lojas_ok={resultado.get('lojas_ok', 0)} "
-                f"pendencias={len(resultado.get('pendencias', []))}"
+                f"linhas={resultado.get('total_linhas',0)} "
+                f"lojas_ok={resultado.get('lojas_ok',0)} "
+                f"pendencias={len(resultado.get('pendencias',[]))}"
             ),
         )
-
-        # deleta arquivo de entrada após processar
-        from config import PASTA_ENTRADA
-
-        arq_entrada = os.path.join(
-            PASTA_ENTRADA,
-            f"{nome_varejista}_{resultado.get('arquivo_saida', '').replace('_tratado', '')}",
-        )
-        limpeza.deletar_arquivo_seguro(arq_entrada)
 
         ir_para(
             lambda: tela_resultado(
@@ -163,4 +136,4 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.run(target=main)

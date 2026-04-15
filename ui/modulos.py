@@ -3,34 +3,18 @@ from ui import tema
 
 
 def tela_modulos(page: ft.Page, usuario: str, banco: str, on_modulo):
-    """
-    Tela de seleção de módulo.
-    on_modulo(modulo: str) é chamado com 'upload' ou 'mapeamento'.
-    """
-
-    def voltar(e):
-        on_modulo("banco")
-
-    btn_voltar = ft.IconButton(
-        icon=ft.Icons.ARROW_BACK,
-        icon_color=tema.TEXT_MUTED,
-        on_click=voltar,
-        tooltip="Voltar",
-    )
-
-    modulos = [
-        ("Tratamento de Bases", "upload"),
-        ("Configurar Mapeamento", "mapeamento"),
-        ("Lojas Pendentes", "validacao"),
-    ]
-
     botoes = [
         tema.btn_outline(
-            nome,
-            on_click=lambda e, m=modulo: on_modulo(m),
+            "Tratamento de Bases", on_click=lambda e: on_modulo("upload"), largura=320
+        ),
+        tema.btn_outline(
+            "Configurar Mapeamento",
+            on_click=lambda e: on_modulo("mapeamento"),
             largura=320,
-        )
-        for nome, modulo in modulos
+        ),
+        tema.btn_outline(
+            "Lojas Pendentes", on_click=lambda e: on_modulo("validacao"), largura=320
+        ),
     ]
 
     info = ft.Column(
@@ -41,11 +25,7 @@ def tela_modulos(page: ft.Page, usuario: str, banco: str, on_modulo):
                 color=tema.TEXT_MUTED,
                 weight=ft.FontWeight.W_500,
             ),
-            ft.Text(
-                f"Usuário: {usuario}",
-                size=12,
-                color=tema.TEXT_MUTED,
-            ),
+            ft.Text(f"Usuário: {usuario}", size=12, color=tema.TEXT_MUTED),
         ],
         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         spacing=2,
@@ -53,7 +33,16 @@ def tela_modulos(page: ft.Page, usuario: str, banco: str, on_modulo):
 
     return ft.Column(
         [
-            ft.Row([btn_voltar], alignment=ft.MainAxisAlignment.START),
+            ft.Row(
+                [
+                    ft.IconButton(
+                        ft.Icons.ARROW_BACK,
+                        icon_color=tema.TEXT_MUTED,
+                        on_click=lambda e: on_modulo("banco"),
+                        tooltip="Trocar banco",
+                    )
+                ],
+            ),
             ft.Column(
                 [
                     ft.Container(expand=True),

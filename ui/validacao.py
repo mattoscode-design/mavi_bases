@@ -1,176 +1,213 @@
 import flet as ft
-import json
 import os
+import subprocess
 from ui import tema
-from engine.conexao import get_conexao
-from engine.matcher import vincular_loja_manualmente
+from config import PASTA_SAIDA
 
 
-def carregar_pendencias(cod_varejista: int) -> list:
-    pasta_temp = os.path.join(os.path.dirname(os.path.dirname(__file__)), "temp")
-    caminho = os.path.join(pasta_temp, f"pendencias_{cod_varejista}.json")
-    if not os.path.exists(caminho):
-        return []
-    with open(caminho, "r", encoding="utf-8") as f:
-        return json.load(f)
+def tela_resultado(
+    page: ft.Page,
+    resultado: dict,
+    nome_varejista: str,
+    cod_varejista: int,
+    banco: str,
+    on_voltar,
+    on_pendencias,
+):
 
-
-def buscar_lojas() -> list[dict]:
-    try:
-        conn = get_conexao()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute(
-            """
-            SELECT id_loja,
-                   COALESCE(NULLIF(TRIM(nome_loja), ''), CONCAT('Loja ', id_loja)) AS nome_loja
-            FROM loja ORDER BY nome_loja
-            """
-        )
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        return rows
-    except Exception:
-        return []
-
-
-def tela_validacao(page: ft.Page, cod_varejista: int, banco: str, on_voltar):
-    """Tela de vinculação de lojas pendentes."""
-
-    pendencias = carregar_pendencias(cod_varejista)
-    lojas = buscar_lojas()
-
-    def voltar(e):
-        on_voltar()
-
-    navbar = ft.Row(
-        [
-            ft.IconButton(
-                ft.Icons.ARROW_BACK, icon_color=tema.TEXT_MUTED, on_click=voltar
-            ),
-            ft.Text(
-                "Lojas Pendentes", size=15, weight=ft.FontWeight.W_500, color=tema.TEXT
-            ),
-            ft.Container(expand=True),
-            ft.Text(banco, size=12, color=tema.TEXT_MUTED),
-        ],
-    )
-
-    if not pendencias:
+    if not resultado.get("ok"):
         corpo = ft.Column(
             [
-                ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=tema.TEAL, size=48),
-                ft.Text("Nenhuma loja pendente!", size=16, color=tema.TEAL),
-                ft.Container(height=8),
-                tema.btn_outline("Voltar", on_click=voltar),
+                ft.Icon(ft.Icons.ERROR_OUTLINE, color=tema.DANGER, size=48),
+                ft.Text("Erro no processamento", size=16, color=tema.DANGER),
+                ft.Text(resultado.get("erro", ""), size=13, color=tema.TEXT_MUTED),
+                ft.Container(height=16),
+                tema.btn_outline("Tentar novamente", on_click=lambda e: on_voltar()),
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=12,
         )
     else:
-        linhas = []
+        total_linhas = resultado.get("total_linhas", 0)
+        lojas_unicas = resultado.get("lojas_unicas", 0)
+        lojas_ok = resultado.get("lojas_ok", 0)
+        lojas_novas = resultado.get("lojas_novas", 0)
+        total_valor = resultado.get("total_valor", 0.0)
+        total_quantidade = resultado.get("total_quantidade", 0.0)
+        setores = resultado.get("setores", [])
+        pendencias = resultado.get("pendencias", [])
+        arquivo = resultado.get("arquivo_saida", "")
 
-        for p in pendencias:
-            id_original = p.get("id_original", "—")
-            nome_pdv = p.get("nome_pdv") or f"Loja {id_original}"
-            status_txt = ft.Text("", size=13, color=tema.TEAL, visible=False)
+        # formata valor em R$
+        def fmt_valor(v):
+            try:
+                return (
+                    f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                )
+            except Exception:
+                return str(v)
 
-            dd = ft.Dropdown(
-                options=[
-                    ft.dropdown.Option(
-                        key=str(l["id_loja"]), text=f"{l['id_loja']} — {l['nome_loja']}"
-                    )
-                    for l in lojas
-                ],
-                hint_text="Selecione a loja...",
-                width=260,
-                bgcolor=tema.BG3,
-                border_color=tema.BORDER,
-                focused_border_color=tema.TEAL,
-                text_style=ft.TextStyle(color=tema.TEXT, size=13),
-                border_radius=8,
-                dense=True,
-            )
+        def fmt_num(v):
+            try:
+                return f"{v:,.0f}".replace(",", ".")
+            except Exception:
+                return str(v)
 
-            def salvar(e, pendencia=p, dropdown=dd, status=status_txt):
-                if not dropdown.value:
-                    tema.snackbar_erro(page, "Selecione uma loja antes de salvar.")
-                    return
-                try:
-                    vincular_loja_manualmente(
-                        cod_varejista=cod_varejista,
-                        nome_alias=pendencia.get("nome_pdv")
-                        or pendencia.get("id_original", ""),
-                        id_loja=int(dropdown.value),
-                    )
-                    status.value = "✅ Salvo"
-                    status.visible = True
-                    dropdown.disabled = True
-                    page.update()
-                except Exception as ex:
-                    tema.snackbar_erro(page, f"Erro: {ex}")
-
-            btn_salvar = ft.ElevatedButton(
-                "Salvar",
-                on_click=salvar,
-                style=ft.ButtonStyle(
-                    bgcolor={ft.ControlState.DEFAULT: tema.TEAL},
-                    color={ft.ControlState.DEFAULT: "#000000"},
-                    shape=ft.RoundedRectangleBorder(radius=8),
-                    padding=ft.padding.symmetric(horizontal=16, vertical=8),
+        # ── Stats principais ──────────────────────────────────────────────────
+        stats_row1 = ft.Row(
+            [
+                _stat_card("Total de linhas", fmt_num(total_linhas)),
+                _stat_card("Lojas únicas", str(lojas_unicas)),
+                _stat_card("Identificadas", str(lojas_ok), cor=tema.TEAL),
+                _stat_card(
+                    "Lojas novas",
+                    str(lojas_novas),
+                    cor=tema.WARN if lojas_novas else tema.TEXT,
                 ),
-            )
+            ],
+            alignment=ft.MainAxisAlignment.CENTER,
+            spacing=10,
+            wrap=True,
+        )
 
-            linha = ft.Container(
-                content=ft.Row(
+        stats_row2 = ft.Row(
+            [
+                _stat_card("Total VALOR", fmt_valor(total_valor), cor=tema.TEAL),
+                _stat_card(
+                    "Total QUANTIDADE", fmt_num(total_quantidade), cor=tema.TEAL
+                ),
+            ],
+            alignment=ft.MainAxisAlignment.CENTER,
+            spacing=10,
+        )
+
+        # ── Setores ───────────────────────────────────────────────────────────
+        setores_widget = ft.Container(visible=False)
+        if setores:
+            chips = ft.Row(
+                [
+                    ft.Container(
+                        content=ft.Text(s, size=11, color=tema.TEAL),
+                        bgcolor=tema.BG3,
+                        border=ft.border.all(1, tema.TEAL),
+                        border_radius=12,
+                        padding=ft.padding.symmetric(horizontal=10, vertical=4),
+                    )
+                    for s in setores[:12]  # mostra no máximo 12
+                ],
+                wrap=True,
+                spacing=6,
+            )
+            setores_widget = ft.Container(
+                content=ft.Column(
                     [
-                        ft.Column(
-                            [
-                                ft.Text(
-                                    str(id_original),
-                                    size=14,
-                                    weight=ft.FontWeight.W_500,
-                                    color=tema.TEXT,
-                                ),
-                                ft.Text(nome_pdv, size=12, color=tema.TEXT_MUTED),
-                            ],
-                            spacing=2,
-                            width=140,
+                        ft.Text(
+                            f"Setores encontrados ({len(setores)})",
+                            size=12,
+                            color=tema.TEXT_MUTED,
                         ),
-                        dd,
-                        btn_salvar,
-                        status_txt,
+                        chips,
                     ],
-                    spacing=12,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=6,
                 ),
                 bgcolor=tema.BG2,
                 border=ft.border.all(1, tema.BORDER),
                 border_radius=8,
                 padding=12,
+                width=560,
+                visible=True,
             )
-            linhas.append(linha)
+
+        # ── Aviso de lojas novas ──────────────────────────────────────────────
+        aviso = ft.Container(
+            content=ft.Row(
+                [
+                    ft.Icon(ft.Icons.WARNING_AMBER, color=tema.WARN, size=20),
+                    ft.Text(
+                        f"{lojas_novas} loja(s) nova(s) não identificada(s) — clique para vincular",
+                        size=13,
+                        color=tema.WARN,
+                    ),
+                ],
+                spacing=8,
+            ),
+            bgcolor="#1e1a0e",
+            border=ft.border.all(1, tema.WARN),
+            border_radius=8,
+            padding=12,
+            on_click=lambda e: on_pendencias(cod_varejista),
+            ink=True,
+            visible=lojas_novas > 0,
+            width=560,
+        )
 
         corpo = ft.Column(
-            linhas,
-            spacing=8,
+            [
+                ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=tema.TEAL, size=44),
+                ft.Text(
+                    f"{nome_varejista.upper()} processado com sucesso",
+                    size=15,
+                    weight=ft.FontWeight.W_500,
+                    color=tema.TEXT,
+                ),
+                ft.Container(height=4),
+                stats_row1,
+                stats_row2,
+                setores_widget,
+                aviso,
+                ft.Text(f"📄  {arquivo}", size=11, color=tema.TEXT_MUTED),
+                ft.Container(height=4),
+                tema.btn_primario(
+                    "Abrir pasta de saída",
+                    on_click=lambda e: subprocess.Popen(f'explorer "{PASTA_SAIDA}"'),
+                    largura=240,
+                ),
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=10,
             scroll=ft.ScrollMode.AUTO,
         )
 
     return ft.Column(
         [
-            ft.Container(
-                content=navbar,
-                bgcolor=tema.BG2,
-                border=ft.border.only(bottom=ft.BorderSide(1, tema.BORDER)),
-                padding=ft.padding.symmetric(horizontal=16, vertical=8),
-            ),
+            tema.navbar("Resultado", banco, on_voltar=lambda e: on_voltar()),
             ft.Container(
                 content=corpo,
                 expand=True,
-                padding=16,
+                padding=24,
+                alignment=ft.alignment.center,
             ),
         ],
         expand=True,
         spacing=0,
+    )
+
+
+def _stat_card(label: str, valor: str, cor: str = None) -> ft.Container:
+    return ft.Container(
+        content=ft.Column(
+            [
+                ft.Text(
+                    label,
+                    size=10,
+                    color=tema.TEXT_MUTED,
+                    weight=ft.FontWeight.W_500,
+                    text_align=ft.TextAlign.CENTER,
+                ),
+                ft.Text(
+                    valor,
+                    size=20,
+                    weight=ft.FontWeight.W_600,
+                    color=cor or tema.TEXT,
+                    text_align=ft.TextAlign.CENTER,
+                ),
+            ],
+            spacing=4,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        bgcolor=tema.BG2,
+        border=ft.border.all(1, tema.BORDER),
+        border_radius=8,
+        padding=ft.padding.symmetric(horizontal=16, vertical=12),
+        width=130,
     )

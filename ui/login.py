@@ -8,13 +8,10 @@ USUARIOS = {
 
 
 def tela_login(page: ft.Page, on_sucesso):
-    """
-    Tela de login.
-    on_sucesso(usuario: str) é chamado quando o login é bem-sucedido.
-    """
     inp_usuario = tema.campo_texto("Usuário")
     inp_senha = tema.campo_texto("Senha", senha=True)
     txt_erro = ft.Text("", color=tema.DANGER, size=13, visible=False)
+    btn = tema.btn_primario("Entrar", largura=320)
 
     def entrar(e):
         usuario = inp_usuario.value.strip()
@@ -36,17 +33,16 @@ def tela_login(page: ft.Page, on_sucesso):
         txt_erro.visible = False
         on_sucesso(usuario)
 
+    btn.on_click = entrar
     inp_usuario.on_submit = entrar
     inp_senha.on_submit = entrar
 
-    btn = tema.btn_primario("Entrar", on_click=entrar, largura=320)
-
-    conteudo = [
-        inp_usuario,
-        inp_senha,
-        txt_erro,
-        ft.Container(height=4),
-        btn,
-    ]
-
-    return tema.tela_centralizada(conteudo)
+    return tema.tela_centralizada(
+        [
+            inp_usuario,
+            inp_senha,
+            txt_erro,
+            ft.Container(height=4),
+            btn,
+        ]
+    )

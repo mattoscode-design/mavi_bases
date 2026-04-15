@@ -14,21 +14,6 @@ def tela_resultado(
     on_voltar,
     on_pendencias,
 ):
-    """Tela de resultado após processamento."""
-
-    def voltar(e):
-        on_voltar()
-
-    navbar = ft.Row(
-        [
-            ft.IconButton(
-                ft.Icons.ARROW_BACK, icon_color=tema.TEXT_MUTED, on_click=voltar
-            ),
-            ft.Text("Resultado", size=15, weight=ft.FontWeight.W_500, color=tema.TEXT),
-            ft.Container(expand=True),
-            ft.Text(banco, size=12, color=tema.TEXT_MUTED),
-        ],
-    )
 
     if not resultado.get("ok"):
         corpo = ft.Column(
@@ -37,52 +22,109 @@ def tela_resultado(
                 ft.Text("Erro no processamento", size=16, color=tema.DANGER),
                 ft.Text(resultado.get("erro", ""), size=13, color=tema.TEXT_MUTED),
                 ft.Container(height=16),
-                tema.btn_outline("Tentar novamente", on_click=voltar),
+                tema.btn_outline("Tentar novamente", on_click=lambda e: on_voltar()),
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=12,
         )
     else:
-        total = resultado.get("total_linhas", 0)
-        ok = resultado.get("lojas_ok", 0)
-        pendentes = len(resultado.get("pendencias", []))
+        total_linhas = resultado.get("total_linhas", 0)
+        lojas_unicas = resultado.get("lojas_unicas", 0)
+        lojas_ok = resultado.get("lojas_ok", 0)
+        lojas_novas = resultado.get("lojas_novas", 0)
+        total_valor = resultado.get("total_valor", 0.0)
+        total_quantidade = resultado.get("total_quantidade", 0.0)
+        setores = resultado.get("setores", [])
+        pendencias = resultado.get("pendencias", [])
+        arquivo = resultado.get("arquivo_saida", "")
 
-        stats = ft.Row(
+        # formata valor em R$
+        def fmt_valor(v):
+            try:
+                return (
+                    f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                )
+            except Exception:
+                return str(v)
+
+        def fmt_num(v):
+            try:
+                return f"{v:,.0f}".replace(",", ".")
+            except Exception:
+                return str(v)
+
+        # ── Stats principais ──────────────────────────────────────────────────
+        stats_row1 = ft.Row(
             [
-                _stat_card("Total de linhas", str(total)),
-                _stat_card("Lojas identificadas", str(ok), cor=tema.TEAL),
+                _stat_card("Total de linhas", fmt_num(total_linhas)),
+                _stat_card("Lojas únicas", str(lojas_unicas)),
+                _stat_card("Identificadas", str(lojas_ok), cor=tema.TEAL),
                 _stat_card(
                     "Lojas novas",
-                    str(pendentes),
-                    cor=tema.WARN if pendentes else tema.TEXT,
+                    str(lojas_novas),
+                    cor=tema.WARN if lojas_novas else tema.TEXT,
                 ),
             ],
             alignment=ft.MainAxisAlignment.CENTER,
-            spacing=12,
+            spacing=10,
+            wrap=True,
         )
 
-        def abrir_pasta(e):
-            subprocess.Popen(f'explorer "{PASTA_SAIDA}"')
-
-        def ver_pendencias(e):
-            on_pendencias(cod_varejista)
-
-        botoes = ft.Row(
+        stats_row2 = ft.Row(
             [
-                tema.btn_primario(
-                    "Abrir pasta de saída", on_click=abrir_pasta, largura=220
+                _stat_card("Total VALOR", fmt_valor(total_valor), cor=tema.TEAL),
+                _stat_card(
+                    "Total QUANTIDADE", fmt_num(total_quantidade), cor=tema.TEAL
                 ),
             ],
             alignment=ft.MainAxisAlignment.CENTER,
-            spacing=12,
+            spacing=10,
         )
 
-        aviso_pendencias = ft.Container(
+        # ── Setores ───────────────────────────────────────────────────────────
+        setores_widget = ft.Container(visible=False)
+        if setores:
+            chips = ft.Row(
+                [
+                    ft.Container(
+                        content=ft.Text(s, size=11, color=tema.TEAL),
+                        bgcolor=tema.BG3,
+                        border=ft.border.all(1, tema.TEAL),
+                        border_radius=12,
+                        padding=ft.padding.symmetric(horizontal=10, vertical=4),
+                    )
+                    for s in setores[:12]  # mostra no máximo 12
+                ],
+                wrap=True,
+                spacing=6,
+            )
+            setores_widget = ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Text(
+                            f"Setores encontrados ({len(setores)})",
+                            size=12,
+                            color=tema.TEXT_MUTED,
+                        ),
+                        chips,
+                    ],
+                    spacing=6,
+                ),
+                bgcolor=tema.BG2,
+                border=ft.border.all(1, tema.BORDER),
+                border_radius=8,
+                padding=12,
+                width=560,
+                visible=True,
+            )
+
+        # ── Aviso de lojas novas ──────────────────────────────────────────────
+        aviso = ft.Container(
             content=ft.Row(
                 [
                     ft.Icon(ft.Icons.WARNING_AMBER, color=tema.WARN, size=20),
                     ft.Text(
-                        f"{pendentes} loja(s) não identificada(s) — clique para vincular",
+                        f"{lojas_novas} loja(s) nova(s) não identificada(s) — clique para vincular",
                         size=13,
                         color=tema.WARN,
                     ),
@@ -93,47 +135,42 @@ def tela_resultado(
             border=ft.border.all(1, tema.WARN),
             border_radius=8,
             padding=12,
-            on_click=ver_pendencias,
+            on_click=lambda e: on_pendencias(cod_varejista),
             ink=True,
-            visible=pendentes > 0,
-        )
-
-        arquivo = resultado.get("arquivo_saida", "")
-        txt_arq = ft.Text(
-            f"✅  {arquivo}",
-            size=12,
-            color=tema.TEAL,
+            visible=lojas_novas > 0,
+            width=560,
         )
 
         corpo = ft.Column(
             [
-                ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=tema.TEAL, size=48),
+                ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=tema.TEAL, size=44),
                 ft.Text(
                     f"{nome_varejista.upper()} processado com sucesso",
                     size=15,
                     weight=ft.FontWeight.W_500,
                     color=tema.TEXT,
                 ),
-                ft.Container(height=8),
-                stats,
-                ft.Container(height=8),
-                txt_arq,
-                aviso_pendencias,
-                ft.Container(height=8),
-                botoes,
+                ft.Container(height=4),
+                stats_row1,
+                stats_row2,
+                setores_widget,
+                aviso,
+                ft.Text(f"📄  {arquivo}", size=11, color=tema.TEXT_MUTED),
+                ft.Container(height=4),
+                tema.btn_primario(
+                    "Abrir pasta de saída",
+                    on_click=lambda e: subprocess.Popen(f'explorer "{PASTA_SAIDA}"'),
+                    largura=240,
+                ),
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=10,
+            scroll=ft.ScrollMode.AUTO,
         )
 
     return ft.Column(
         [
-            ft.Container(
-                content=navbar,
-                bgcolor=tema.BG2,
-                border=ft.border.only(bottom=ft.BorderSide(1, tema.BORDER)),
-                padding=ft.padding.symmetric(horizontal=16, vertical=8),
-            ),
+            tema.navbar("Resultado", banco, on_voltar=lambda e: on_voltar()),
             ft.Container(
                 content=corpo,
                 expand=True,
@@ -151,10 +188,18 @@ def _stat_card(label: str, valor: str, cor: str = None) -> ft.Container:
         content=ft.Column(
             [
                 ft.Text(
-                    label, size=11, color=tema.TEXT_MUTED, weight=ft.FontWeight.W_500
+                    label,
+                    size=10,
+                    color=tema.TEXT_MUTED,
+                    weight=ft.FontWeight.W_500,
+                    text_align=ft.TextAlign.CENTER,
                 ),
                 ft.Text(
-                    valor, size=26, weight=ft.FontWeight.W_600, color=cor or tema.TEXT
+                    valor,
+                    size=20,
+                    weight=ft.FontWeight.W_600,
+                    color=cor or tema.TEXT,
+                    text_align=ft.TextAlign.CENTER,
                 ),
             ],
             spacing=4,
@@ -163,6 +208,6 @@ def _stat_card(label: str, valor: str, cor: str = None) -> ft.Container:
         bgcolor=tema.BG2,
         border=ft.border.all(1, tema.BORDER),
         border_radius=8,
-        padding=ft.padding.symmetric(horizontal=20, vertical=14),
-        width=140,
+        padding=ft.padding.symmetric(horizontal=16, vertical=12),
+        width=130,
     )
