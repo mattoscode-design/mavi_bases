@@ -40,10 +40,12 @@ def carregar(cod_varejista: int) -> dict | None:
     mapeamento = {
         "renomear": {},
         "separar": {},
-        "cruzar_loja": {},
+        "cruzar_loja": None,
         "cruzar_ean": {},
+        "cruzar_varejista": None,
         "calcular": {},
         "novas": [],
+        "ignorar": [],
     }
 
     for row in rows:
@@ -77,18 +79,54 @@ def carregar(cod_varejista: int) -> dict | None:
                 mapeamento["separar"][entrada][1] = saida
 
         elif tipo == "id_loja" and entrada:
-            mapeamento["cruzar_loja"] = {
-                "coluna_id_direto": entrada,
-                "coluna_matricula": None,
-                "coluna_nome": None,
-                "saida_id": "LOJA",
-                "saida_nome": "BANCO",
-            }
+            if mapeamento["cruzar_loja"] is None:
+                mapeamento["cruzar_loja"] = {
+                    "coluna_id_direto": None,
+                    "coluna_matricula": None,
+                    "coluna_nome": None,
+                    "saida_id": "LOJA",
+                    "saida_nome": "BANCO",
+                }
+            mapeamento["cruzar_loja"]["coluna_id_direto"] = entrada
+
+        elif tipo == "matricula_loja" and entrada:
+            if mapeamento["cruzar_loja"] is None:
+                mapeamento["cruzar_loja"] = {
+                    "coluna_id_direto": None,
+                    "coluna_matricula": None,
+                    "coluna_nome": None,
+                    "saida_id": "LOJA",
+                    "saida_nome": "BANCO",
+                }
+            mapeamento["cruzar_loja"]["coluna_matricula"] = entrada
+
+        elif tipo == "nome_loja" and entrada:
+            if mapeamento["cruzar_loja"] is None:
+                mapeamento["cruzar_loja"] = {
+                    "coluna_id_direto": None,
+                    "coluna_matricula": None,
+                    "coluna_nome": None,
+                    "saida_id": "LOJA",
+                    "saida_nome": "BANCO",
+                }
+            mapeamento["cruzar_loja"]["coluna_nome"] = entrada
 
         elif tipo == "cruzar_ean" and entrada:
             mapeamento["cruzar_ean"] = {
                 "coluna_ean": entrada,
                 "saida_setor": saida or "SETOR_PRODUTO",
+            }
+
+        elif tipo == "ignorar" and entrada:
+            mapeamento["ignorar"].append(entrada)
+
+        elif tipo == "cruzar_varejista" and entrada:
+            mapeamento["cruzar_varejista"] = {
+                "coluna_entrada": entrada,
+                "saida": saida or "VAREJISTA_BANCO",
+                "permitidos": {
+                    int(x) for x in formula.split("|") if x.strip().isdigit()
+                },
             }
 
         elif tipo == "calcular_quantidade" and entrada:
@@ -100,7 +138,10 @@ def carregar(cod_varejista: int) -> dict | None:
                     partes[1].strip(),
                 )
 
-        elif tipo in ("vazia", "valor_fixo", "ano_atual") and not entrada:
+        elif (
+            tipo in ("vazia", "valor_fixo", "ano_atual", "calcular_quantidade")
+            and not entrada
+        ):
             mapeamento["novas"].append(
                 {
                     "coluna_saida": saida,
@@ -110,3 +151,26 @@ def carregar(cod_varejista: int) -> dict | None:
             )
 
     return mapeamento
+
+
+def _colunas_raw(cod_varejista: int) -> list:
+    """
+    Retorna lista de (coluna_entrada, tipo_acao) para todas as colunas do varejista.
+    Usado para identificar colunas a ignorar antes do processamento.
+    """
+    try:
+        from engine.conexao import get_conexao
+
+        conn = get_conexao()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT coluna_entrada, tipo_acao FROM mapeamento_colunas "
+            "WHERE cod_varejista = %s AND coluna_entrada IS NOT NULL",
+            (cod_varejista,),
+        )
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return [(r[0], r[1]) for r in rows]
+    except Exception:
+        return []

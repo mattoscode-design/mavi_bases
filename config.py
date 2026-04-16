@@ -1,7 +1,9 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+_ENV_PATH = Path(__file__).parent / ".env"
+load_dotenv(_ENV_PATH)
 
 # ── Banco de dados ─────────────────────────────────────────────────────────────
 DB_CONFIG = {
@@ -11,6 +13,9 @@ DB_CONFIG = {
     "user": os.getenv("DB_USER"),
     "password": os.getenv("DB_PASSWORD"),
 }
+
+ENV_CONFIGURADO = bool(os.getenv("DB_USER") and os.getenv("DB_PASSWORD"))
+ENV_AUSENTE = not _ENV_PATH.exists()
 
 # ── Pastas do projeto ──────────────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
