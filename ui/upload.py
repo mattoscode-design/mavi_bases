@@ -115,6 +115,7 @@ def tela_upload(page: ft.Page, usuario: str, banco: str, on_voltar, on_resultado
         btn_processar.disabled = True
         page.update()
 
+        navegou = [False]
         try:
             cod_varejista = int(dd_varejista.value)
             nome_varejista = next(
@@ -141,6 +142,14 @@ def tela_upload(page: ft.Page, usuario: str, banco: str, on_voltar, on_resultado
                 page.update()
                 return
 
+            # Limpa UI antes de navegar para a próxima tela
+            processando[0] = False
+            barra_progresso.value = 0
+            barra_progresso.visible = False
+            btn_processar.disabled = False
+            txt_status.visible = False
+            page.update()
+            navegou[0] = True
             on_resultado(resultado, nome_varejista, cod_varejista)
 
         except Exception as ex:
@@ -148,12 +157,13 @@ def tela_upload(page: ft.Page, usuario: str, banco: str, on_voltar, on_resultado
             txt_erro.visible = True
             page.update()
         finally:
-            processando[0] = False
-            barra_progresso.value = 0
-            barra_progresso.visible = False
-            btn_processar.disabled = False
-            txt_status.visible = False
-            page.update()
+            if not navegou[0]:
+                processando[0] = False
+                barra_progresso.value = 0
+                barra_progresso.visible = False
+                btn_processar.disabled = False
+                txt_status.visible = False
+                page.update()
 
     btn_processar = tema.btn_primario("Processar base", largura=280)
     btn_processar.on_click = lambda e: threading.Thread(

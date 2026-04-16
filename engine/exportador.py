@@ -1,25 +1,26 @@
 import importlib.util
 import os
+import tempfile
 import pandas as pd
-from config import PASTA_SAIDA
 
 
 def salvar_excel(df: pd.DataFrame, pendencias: list, nome_varejista: str) -> str:
     """
-    Salva o DataFrame tratado em Excel na pasta saidas/.
-    Cria aba LOJAS NOVAS se houver pendências.
-    Retorna o nome do arquivo gerado.
+    Salva o DataFrame tratado em um arquivo Excel temporário.
+    Retorna o caminho completo do arquivo (em temp do sistema).
+    O chamador é responsável por copiar/mover e depois deletar.
     """
-    nome_arquivo = (
-        f"{nome_varejista}_tratado_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-    )
-    caminho = os.path.join(PASTA_SAIDA, nome_arquivo)
     engine = "xlsxwriter" if importlib.util.find_spec("xlsxwriter") else "openpyxl"
+    suffix = f"_{nome_varejista}_BASE.xlsx"
 
-    try:
-        with pd.ExcelWriter(caminho, engine=engine) as writer:
+    # delete=False para poder passar o caminho adiante antes de copiar
+    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    caminho = tmp.name
+    tmp.close()
+
+    def _escrever(eng):
+        with pd.ExcelWriter(caminho, engine=eng) as writer:
             df.to_excel(writer, index=False, sheet_name="BASE_TRATADA")
-
             if pendencias:
                 df_pend = pd.DataFrame(pendencias).drop(columns=["chave"])
                 df_pend.rename(
@@ -32,24 +33,13 @@ def salvar_excel(df: pd.DataFrame, pendencias: list, nome_varejista: str) -> str
                     inplace=True,
                 )
                 df_pend.to_excel(writer, index=False, sheet_name="LOJAS NOVAS")
+
+    try:
+        _escrever(engine)
     except Exception:
         if engine == "xlsxwriter":
-            with pd.ExcelWriter(caminho, engine="openpyxl") as writer:
-                df.to_excel(writer, index=False, sheet_name="BASE_TRATADA")
-
-                if pendencias:
-                    df_pend = pd.DataFrame(pendencias).drop(columns=["chave"])
-                    df_pend.rename(
-                        columns={
-                            "id_original": "ID DA BASE",
-                            "matricula": "MATRÍCULA",
-                            "nome_pdv": "NOME PDV",
-                            "id_loja": "ID LOJA BANCO",
-                        },
-                        inplace=True,
-                    )
-                    df_pend.to_excel(writer, index=False, sheet_name="LOJAS NOVAS")
+            _escrever("openpyxl")
         else:
             raise
 
-    return nome_arquivo
+    return caminho

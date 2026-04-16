@@ -85,6 +85,9 @@ def tela_validacao(
             dense=True,
         )
 
+        # Placeholder para o botão — será substituído depois que row_container existir
+        btn_row = ft.Row(spacing=10, wrap=True)
+
         row_container = ft.Container(
             content=ft.Column(
                 [
@@ -115,20 +118,7 @@ def tela_validacao(
                         spacing=10,
                         wrap=True,
                     ),
-                    ft.Row(
-                        [
-                            dd_lojas,
-                            tema.btn_primario(
-                                "Vincular",
-                                on_click=lambda e, pend=pendencia, dd=dd_lojas, cont=row_container: vincular(
-                                    e, pend, dd, cont
-                                ),
-                                largura=120,
-                            ),
-                        ],
-                        spacing=10,
-                        wrap=True,
-                    ),
+                    btn_row,
                 ],
                 spacing=10,
             ),
@@ -138,6 +128,16 @@ def tela_validacao(
             padding=ft.padding.symmetric(horizontal=14, vertical=14),
             margin=ft.margin.only(bottom=10),
         )
+
+        # Agora row_container já existe — adiciona dropdown + botão
+        btn_vincular = tema.btn_primario(
+            "Vincular",
+            on_click=lambda e, pend=pendencia, dd=dd_lojas, cont=row_container: vincular(
+                e, pend, dd, cont
+            ),
+            largura=120,
+        )
+        btn_row.controls.extend([dd_lojas, btn_vincular])
 
         itens.append(row_container)
 
@@ -158,7 +158,9 @@ def tela_validacao(
         try:
             vincular_loja_manualmente(cod_varejista, nome_alias, int(dd.value))
             cont.bgcolor = "#1b431a"
+            # desabilita o botão Vincular (segundo item de btn_row)
             cont.content.controls[-1].controls[1].disabled = True
+            cont.content.controls[-1].controls[1].text = "✅ Vinculado"
             tema.snackbar_sucesso(page, "Vinculação salva com sucesso.")
             page.update()
         except Exception as ex:

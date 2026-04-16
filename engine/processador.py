@@ -98,6 +98,16 @@ def processar_base(
     pendencias = []
     saida_id = "LOJA"
     saida_nome = "BANCO"
+    varejistas_novos = []
+    # cruzar_varejista vem ANTES de cruzar_loja para popular _COD_VAR_ por linha
+    if mapeamento.get("cruzar_varejista"):
+        _status("Cruzando varejistas...")
+        inicio = time.perf_counter()
+        df, varejistas_novos = transformador.cruzar_varejista(
+            df, mapeamento["cruzar_varejista"]
+        )
+        timings["cruzar_varejista"] = time.perf_counter() - inicio
+
     if mapeamento.get("cruzar_loja"):
         _status("Identificando lojas...")
         inicio = time.perf_counter()
@@ -106,15 +116,13 @@ def processar_base(
         )
         timings["cruzar_loja"] = time.perf_counter() - inicio
         saida_nome = mapeamento["cruzar_loja"].get("saida_nome", "BANCO")
+        # remove coluna temporária de varejista por linha
+        if "_COD_VAR_" in df.columns:
+            df.drop(columns=["_COD_VAR_"], inplace=True)
 
-    varejistas_novos = []
-    if mapeamento.get("cruzar_varejista"):
-        _status("Cruzando varejistas...")
-        inicio = time.perf_counter()
-        df, varejistas_novos = transformador.cruzar_varejista(
-            df, mapeamento["cruzar_varejista"]
-        )
-        timings["cruzar_varejista"] = time.perf_counter() - inicio
+    # garante que _COD_VAR_ é removida mesmo sem cruzar_loja
+    if "_COD_VAR_" in df.columns:
+        df.drop(columns=["_COD_VAR_"], inplace=True)
 
     if mapeamento.get("cruzar_ean"):
         _status("Cruzando EANs...")
@@ -141,7 +149,9 @@ def processar_base(
     if mapeamento.get("novas"):
         _status("Adicionando novas colunas...")
         inicio = time.perf_counter()
-        df = transformador.adicionar_colunas_novas(df, mapeamento["novas"])
+        df = transformador.adicionar_colunas_novas(
+            df, mapeamento["novas"], mapeamento.get("renomear", {})
+        )
         timings["adicionar_novas"] = time.perf_counter() - inicio
 
     _status("Sinalizando pendências...")
@@ -151,19 +161,21 @@ def processar_base(
 
     # ── 5. Estatísticas ───────────────────────────────────────────────────────
 
-    # total valor
+    # total valor — busca qualquer coluna com "valor" no nome
     total_valor = 0.0
-    if "VALOR" in df.columns:
-        total_valor = pd.to_numeric(df["VALOR"], errors="coerce").sum()
-        total_valor = round(float(total_valor), 2) if not pd.isna(total_valor) else 0.0
+    col_valor = next((c for c in df.columns if "valor" in c.lower()), None)
+    if col_valor:
+        _v = pd.to_numeric(df[col_valor], errors="coerce").sum()
+        total_valor = round(float(_v), 2) if not pd.isna(_v) else 0.0
 
-    # total quantidade
+    # total quantidade — busca qualquer coluna com "quant" ou "qtd" no nome
     total_quantidade = 0.0
-    if "QUANTIDADE" in df.columns:
-        total_quantidade = pd.to_numeric(df["QUANTIDADE"], errors="coerce").sum()
-        total_quantidade = (
-            round(float(total_quantidade), 2) if not pd.isna(total_quantidade) else 0.0
-        )
+    col_qtd = next(
+        (c for c in df.columns if "quant" in c.lower() or "qtd" in c.lower()), None
+    )
+    if col_qtd:
+        _q = pd.to_numeric(df[col_qtd], errors="coerce").sum()
+        total_quantidade = round(float(_q), 2) if not pd.isna(_q) else 0.0
 
     # setores únicos
     setores = []
@@ -191,6 +203,43 @@ def processar_base(
 
     lojas_novas = len(pendencias)
 
+    # mês + ano referência para nome do arquivo de saída
+    mes_ref = ""
+    _mes_val = ""
+    _ano_val = ""
+    for col_mes in ("MÊS", "MES"):
+        if col_mes in df.columns:
+            vals = [
+                v
+                for v in df[col_mes].dropna().unique()
+                if str(v).strip() not in ("", "nan")
+            ]
+            if vals:
+                _mes_val = str(vals[0])
+                break
+    if "ANO" in df.columns:
+        vals = [
+            v for v in df["ANO"].dropna().unique() if str(v).strip() not in ("", "nan")
+        ]
+        if vals:
+            ano_str = str(vals[0])
+            # normaliza 2 dígitos → 4 dígitos
+            if len(ano_str) == 2 and ano_str.isdigit():
+                ano_str = "20" + ano_str
+            _ano_val = ano_str
+
+    if _mes_val and _ano_val:
+        mes_ref = f"{_mes_val}_{_ano_val}"
+    elif _mes_val:
+        mes_ref = _mes_val
+    elif _ano_val:
+        mes_ref = _ano_val
+
+    # coluna de varejista cruzado (para permitir split por varejista no download)
+    coluna_varejista_saida = ""
+    if mapeamento.get("cruzar_varejista"):
+        coluna_varejista_saida = mapeamento["cruzar_varejista"].get("saida", "")
+
     # ── 6. Exportar ───────────────────────────────────────────────────────────
     _status("Exportando arquivo Excel...")
     try:
@@ -214,6 +263,8 @@ def processar_base(
         "setores": setores,
         "pendencias": pendencias,
         "varejistas_novos": varejistas_novos,
+        "mes_ref": mes_ref,
+        "coluna_varejista_saida": coluna_varejista_saida,
         "erro": None,
         "timings": timings,
     }

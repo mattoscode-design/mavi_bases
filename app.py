@@ -12,7 +12,7 @@ from ui.upload import tela_upload
 from ui.resultado import tela_resultado
 from ui.validacao import tela_validacao
 from security import audit, limpeza
-from config import PASTA_ENTRADA, PASTA_SAIDA
+from config import PASTA_ENTRADA
 
 
 def main(page: ft.Page):
@@ -27,7 +27,6 @@ def main(page: ft.Page):
     page.theme = tema.TEMA
 
     limpeza.limpar_entradas_antigas(PASTA_ENTRADA, horas=24)
-    limpeza.limpar_saidas_antigas(PASTA_SAIDA, dias=30)
 
     sessao = {
         "usuario": "",
@@ -39,8 +38,29 @@ def main(page: ft.Page):
     }
 
     def ir_para(tela_fn):
+        try:
+            controle = tela_fn()
+        except Exception as ex:
+            import traceback
+
+            controle = ft.Column(
+                [
+                    ft.Icon(ft.Icons.ERROR_OUTLINE, color=tema.DANGER, size=48),
+                    ft.Text("Erro ao carregar tela", size=16, color=tema.DANGER),
+                    ft.Text(str(ex), size=12, color=tema.TEXT_MUTED),
+                    ft.Text(
+                        traceback.format_exc(),
+                        size=10,
+                        color=tema.TEXT_MUTED,
+                        selectable=True,
+                    ),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=8,
+                scroll=ft.ScrollMode.AUTO,
+            )
         page.controls.clear()
-        page.controls.append(tela_fn())
+        page.controls.append(controle)
         page.update()
 
     def para_login():

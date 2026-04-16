@@ -1,8 +1,11 @@
 import flet as ft
 import os
+import re
+import shutil
 import subprocess
+import tkinter as tk
+from tkinter import filedialog
 from ui import tema
-from config import PASTA_SAIDA
 
 
 def tela_resultado(
@@ -38,6 +41,10 @@ def tela_resultado(
         varejistas_novos = resultado.get("varejistas_novos", [])
         pendencias = resultado.get("pendencias", [])
         arquivo = resultado.get("arquivo_saida", "")
+        mes_ref = resultado.get("mes_ref", "")
+        coluna_varejista_saida = resultado.get("coluna_varejista_saida", "")
+
+        arquivo_state = [arquivo]  # mutável — None após remoção
 
         # formata valor em R$
         def fmt_valor(v):
@@ -54,12 +61,11 @@ def tela_resultado(
             except Exception:
                 return str(v)
 
-        # ── Stats principais ──────────────────────────────────────────────────
+        # ── Linha 1: lojas ────────────────────────────────────────────────────
         stats_row1 = ft.Row(
             [
-                _stat_card("Total de linhas", fmt_num(total_linhas)),
-                _stat_card("Lojas únicas", str(lojas_unicas)),
-                _stat_card("Identificadas", str(lojas_ok), cor=tema.TEAL),
+                _stat_card("Linhas processadas", fmt_num(total_linhas)),
+                _stat_card("Lojas identificadas", str(lojas_ok), cor=tema.TEAL),
                 _stat_card(
                     "Lojas novas",
                     str(lojas_novas),
@@ -71,67 +77,23 @@ def tela_resultado(
             wrap=True,
         )
 
+        # ── Linha 2: valores ──────────────────────────────────────────────────
         stats_row2 = ft.Row(
             [
-                _stat_card("Total VALOR", fmt_valor(total_valor), cor=tema.TEAL),
                 _stat_card(
-                    "Total QUANTIDADE", fmt_num(total_quantidade), cor=tema.TEAL
+                    "Total VALOR",
+                    fmt_valor(total_valor) if total_valor else "—",
+                    cor=tema.TEAL,
+                ),
+                _stat_card(
+                    "Total QUANTIDADE",
+                    fmt_num(total_quantidade) if total_quantidade else "—",
+                    cor=tema.TEAL,
                 ),
             ],
             alignment=ft.MainAxisAlignment.CENTER,
             spacing=10,
         )
-
-        timings = resultado.get("timings", {})
-        sorted_timings = sorted(
-            [(name, t) for name, t in timings.items() if t is not None],
-            key=lambda x: x[1],
-            reverse=True,
-        )
-        etapa_mais_lenta = sorted_timings[0] if sorted_timings else None
-        friendly_names = {
-            "load_mapping": "Mapeamento",
-            "read_excel": "Leitura",
-            "drop_ignored": "Ignorar colunas",
-            "separar_mes_ano": "Separar MÊS/ANO",
-            "cruzar_loja": "Cruzar lojas",
-            "cruzar_ean": "Cruzar EAN",
-            "renomear": "Renomear",
-            "calcular": "Calcular",
-            "adicionar_novas": "Novas colunas",
-            "sinalizar_pendencias": "Sinalizar pendências",
-            "cruzar_varejista": "Cruzar varejistas",
-            "exportar": "Exportar",
-            "total": "Total",
-        }
-        stats_row3 = ft.Row(
-            [
-                _stat_card(
-                    "Tempo total",
-                    f"{timings.get('total', 0):.2f}s",
-                    cor=tema.TEXT,
-                ),
-                _stat_card(
-                    "Exportação",
-                    f"{timings.get('exportar', 0):.2f}s",
-                    cor=tema.TEXT,
-                ),
-            ],
-            alignment=ft.MainAxisAlignment.CENTER,
-            spacing=10,
-        )
-
-        etapa_mais_lenta_text = ""
-        if etapa_mais_lenta:
-            nome_f = friendly_names.get(etapa_mais_lenta[0], etapa_mais_lenta[0])
-            etapa_mais_lenta_text = (
-                f"Etapa mais lenta: {nome_f} ({etapa_mais_lenta[1]:.2f}s)"
-            )
-
-        top_timings = []
-        for name, t in sorted_timings[:3]:
-            top_timings.append(f"{friendly_names.get(name, name)}: {t:.2f}s")
-        detalhe_tempo = " | ".join(top_timings)
 
         # ── Setores ───────────────────────────────────────────────────────────
         setores_widget = ft.Container(visible=False)
@@ -145,7 +107,7 @@ def tela_resultado(
                         border_radius=12,
                         padding=ft.padding.symmetric(horizontal=10, vertical=4),
                     )
-                    for s in setores[:12]  # mostra no máximo 12
+                    for s in setores[:12]
                 ],
                 wrap=True,
                 spacing=6,
@@ -170,7 +132,7 @@ def tela_resultado(
                 visible=True,
             )
 
-        # ── Aviso de lojas novas ──────────────────────────────────────────────
+        # ── Avisos ────────────────────────────────────────────────────────────
         aviso_varejistas = ft.Container(
             content=ft.Column(
                 [
@@ -204,7 +166,7 @@ def tela_resultado(
             width=560,
         )
 
-        aviso = ft.Container(
+        aviso_lojas = ft.Container(
             content=ft.Row(
                 [
                     ft.Icon(ft.Icons.WARNING_AMBER, color=tema.WARN, size=20),
@@ -226,6 +188,125 @@ def tela_resultado(
             width=560,
         )
 
+        # ── Botões salvar ─────────────────────────────────────────────────────
+        txt_salvo = ft.Text("", size=12, color=tema.TEAL, visible=False)
+
+        def _escolher_pasta():
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            pasta = filedialog.askdirectory(title="Selecionar pasta de destino")
+            root.destroy()
+            return pasta
+
+        def salvar_base(e):
+            if not arquivo_state[0] or not os.path.exists(arquivo_state[0]):
+                txt_salvo.value = "Arquivo temporário já foi removido."
+                txt_salvo.visible = True
+                page.update()
+                return
+            pasta = _escolher_pasta()
+            if not pasta:
+                return
+            pasta_base = os.path.join(pasta, "BASE")
+            os.makedirs(pasta_base, exist_ok=True)
+            var_safe = re.sub(r"[^\w]", "_", nome_varejista)
+            nome_dest = (
+                f"{var_safe}_{mes_ref}.xlsx" if mes_ref else f"{var_safe}_BASE.xlsx"
+            )
+            dst = os.path.join(pasta_base, nome_dest)
+            try:
+                shutil.copy2(arquivo_state[0], dst)
+                try:
+                    os.remove(arquivo_state[0])
+                    arquivo_state[0] = None
+                except Exception:
+                    pass
+                txt_salvo.value = f"✅ Salvo em BASE/{nome_dest}"
+                txt_salvo.visible = True
+                page.update()
+                subprocess.Popen(f'explorer "{pasta_base}"')
+            except Exception as ex:
+                txt_salvo.value = f"Erro ao salvar: {ex}"
+                txt_salvo.visible = True
+                page.update()
+
+        def salvar_por_varejista(e):
+            if not arquivo_state[0] or not os.path.exists(arquivo_state[0]):
+                txt_salvo.value = "Arquivo temporário já foi removido."
+                txt_salvo.visible = True
+                page.update()
+                return
+            pasta = _escolher_pasta()
+            if not pasta:
+                return
+            pasta_base = os.path.join(pasta, "BASE")
+            os.makedirs(pasta_base, exist_ok=True)
+            try:
+                import pandas as pd
+
+                # Lê sem dtype=str para preservar colunas numéricas como float
+                # (evita converter 1234.56 → string "1234.56" com ponto)
+                df_out = pd.read_excel(arquivo_state[0], sheet_name="BASE_TRATADA")
+                col = coluna_varejista_saida
+                if not col or col not in df_out.columns:
+                    txt_salvo.value = "Coluna de varejista não encontrada no arquivo."
+                    txt_salvo.visible = True
+                    page.update()
+                    return
+                valores = [
+                    v
+                    for v in df_out[col].dropna().unique()
+                    if str(v).strip() not in ("", "NÃO ENCONTRADO", "nan")
+                ]
+                if not valores:
+                    txt_salvo.value = "Nenhum varejista encontrado para separar."
+                    txt_salvo.visible = True
+                    page.update()
+                    return
+                salvos = []
+                for var in valores:
+                    var_safe = re.sub(r"[^\w]", "_", str(var))
+                    nome_dest = (
+                        f"{var_safe}_{mes_ref}.xlsx"
+                        if mes_ref
+                        else f"{var_safe}_BASE.xlsx"
+                    )
+                    dst = os.path.join(pasta_base, nome_dest)
+                    df_var = df_out[df_out[col] == var]
+                    df_var.to_excel(dst, index=False)
+                    salvos.append(nome_dest)
+                try:
+                    os.remove(arquivo_state[0])
+                    arquivo_state[0] = None
+                except Exception:
+                    pass
+                txt_salvo.value = f"✅ {len(salvos)} arquivo(s) salvos em BASE/"
+                txt_salvo.visible = True
+                page.update()
+                subprocess.Popen(f'explorer "{pasta_base}"')
+            except Exception as ex:
+                txt_salvo.value = f"Erro ao salvar: {ex}"
+                txt_salvo.visible = True
+                page.update()
+
+        btn_salvar = tema.btn_primario(
+            "💾 Salvar base tratada",
+            on_click=salvar_base,
+            largura=240,
+        )
+
+        btn_salvar_por_var = ft.OutlinedButton(
+            "🏬 Baixar por varejista",
+            on_click=salvar_por_varejista,
+            visible=bool(coluna_varejista_saida),
+            style=ft.ButtonStyle(
+                color=tema.TEAL,
+                side=ft.BorderSide(color=tema.TEAL, width=1),
+                shape=ft.RoundedRectangleBorder(radius=8),
+            ),
+        )
+
         corpo = ft.Column(
             [
                 ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=tema.TEAL, size=44),
@@ -238,19 +319,17 @@ def tela_resultado(
                 ft.Container(height=4),
                 stats_row1,
                 stats_row2,
-                stats_row3,
-                ft.Text(etapa_mais_lenta_text, size=12, color=tema.TEXT_MUTED),
-                ft.Text(detalhe_tempo, size=11, color=tema.TEXT_MUTED),
                 setores_widget,
                 aviso_varejistas,
-                aviso,
-                ft.Text(f"📄  {arquivo}", size=11, color=tema.TEXT_MUTED),
+                aviso_lojas,
                 ft.Container(height=4),
-                tema.btn_primario(
-                    "Abrir pasta de saída",
-                    on_click=lambda e: subprocess.Popen(f'explorer "{PASTA_SAIDA}"'),
-                    largura=240,
+                ft.Row(
+                    [btn_salvar, btn_salvar_por_var],
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=12,
+                    wrap=True,
                 ),
+                txt_salvo,
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=10,
@@ -264,7 +343,7 @@ def tela_resultado(
                 content=corpo,
                 expand=True,
                 padding=24,
-                alignment=ft.alignment.center,
+                alignment=ft.alignment.Alignment.CENTER,
             ),
         ],
         expand=True,

@@ -138,7 +138,10 @@ def carregar(cod_varejista: int) -> dict | None:
                     partes[1].strip(),
                 )
 
-        elif tipo in ("vazia", "valor_fixo", "ano_atual") and not entrada:
+        elif (
+            tipo in ("vazia", "valor_fixo", "ano_atual", "calcular_quantidade")
+            and not entrada
+        ):
             mapeamento["novas"].append(
                 {
                     "coluna_saida": saida,

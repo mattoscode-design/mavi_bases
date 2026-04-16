@@ -132,11 +132,12 @@ def snackbar_sucesso(page: ft.Page, msg: str):
 
 
 def snackbar_erro(page: ft.Page, msg: str):
-    page.snack_bar = ft.SnackBar(
+    sb = ft.SnackBar(
         ft.Text(msg, color=TEXT),
         bgcolor=DANGER,
         open=True,
     )
+    page.overlay.append(sb)
     page.update()
 
 

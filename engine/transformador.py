@@ -96,7 +96,10 @@ def _tentar_numerico(serie: pd.Series) -> pd.Series:
         if pd.isna(v) or str(v).strip() == "":
             return None
         s = str(v).strip()
-        if re.match(r"^-?[\d\.]+,\d+$", s):
+        # "1.234" ou "1.234.567" — separador de milhar brasileiro (ponto, sem vírgula decimal)
+        if re.match(r"^-?\d{1,3}(\.\d{3})+$", s):
+            s = s.replace(".", "")
+        elif re.match(r"^-?[\d\.]+,\d+$", s):
             s = s.replace(".", "").replace(",", ".")
         elif re.match(r"^-?[\d,]+\.\d+$", s) or re.match(r"^-?[\d,]+$", s):
             s = s.replace(",", "")
@@ -140,33 +143,52 @@ def cruzar_loja(df: pd.DataFrame, cfg: dict, cod_varejista: int) -> tuple:
     """
     Cruza matrícula/id com o banco:
     - Renomeia a coluna original para LOJA (mantém valor original da base)
+    - Cria coluna COD_LOJA com o id_loja encontrado no banco
     - Cria coluna BANCO com o nome da loja encontrada no banco
     - Se não achar: BANCO fica 'NÃO ENCONTRADO' e sinaliza como pendência
+    Quando _COD_VAR_ existe no df usa o cod_varejista por linha para aliases.
     Retorna (df, pendencias, saida_id).
     """
     pendencias = []
     saida_id = cfg.get("saida_id", "LOJA")
     saida_nome = cfg.get("saida_nome", "BANCO")
+    saida_cod = cfg.get("saida_cod", "COD_LOJA")
 
     col_id_direto = cfg.get("coluna_id_direto")
     col_matricula = cfg.get("coluna_matricula")
     col_nome = cfg.get("coluna_nome")
     col_original = col_id_direto or col_matricula or col_nome
 
+    # detecta se temos varejistas por linha (base consolidada)
+    tem_cod_var = "_COD_VAR_" in df.columns
+
     nomes_banco = []
+    cods_loja = []
+    encontrados = []  # True = loja identificada, False = pendência
     ids_pendentes = set()
     novos_aliases = set()
-    cache = carregar_cache(cod_varejista)
+    cache_global = carregar_cache(cod_varejista)
+    # cache por varejista específico (para aliases corretos em bases consolidadas)
+    cache_por_var: dict = {}
+
+    def _get_cache(cv: int):
+        if cv == 0 or cv == cod_varejista:
+            return cache_global
+        if cv not in cache_por_var:
+            cache_por_var[cv] = carregar_cache(cv)
+        return cache_por_var[cv]
 
     cols = list(df.columns)
     idx_id_direto = cols.index(col_id_direto) if col_id_direto in cols else None
     idx_matricula = cols.index(col_matricula) if col_matricula in cols else None
     idx_nome = cols.index(col_nome) if col_nome in cols else None
+    idx_cod_var = cols.index("_COD_VAR_") if tem_cod_var else None
 
     for row in df.itertuples(index=False, name=None):
         id_direto = row[idx_id_direto] if idx_id_direto is not None else None
         matricula = row[idx_matricula] if idx_matricula is not None else None
         nome_pdv = row[idx_nome] if idx_nome is not None else ""
+        cv = int(row[idx_cod_var]) if idx_cod_var is not None else cod_varejista
 
         # captura id original de forma segura
         id_original = None
@@ -179,22 +201,39 @@ def cruzar_loja(df: pd.DataFrame, cfg: dict, cod_varejista: int) -> tuple:
         ):
             id_original = str(matricula).strip()
 
+        cache_linha = _get_cache(cv)
         resultado = identificar_loja(
             matricula,
             nome_pdv,
-            cod_varejista,
+            cv if tem_cod_var else cod_varejista,
             id_direto=id_direto,
-            cache=cache,
+            cache=cache_linha,
         )
 
         if resultado["encontrado"]:
             nomes_banco.append(resultado["nome_loja"])
+            cods_loja.append(
+                str(resultado["id_loja"]) if resultado["id_loja"] is not None else ""
+            )
+            encontrados.append(True)
             if resultado["estrategia"] in ("cluster_9", "numero_no_nome") and nome_pdv:
                 novos_aliases.add(
-                    (cod_varejista, normalizar(nome_pdv), resultado["id_loja"])
+                    (
+                        cv if tem_cod_var else cod_varejista,
+                        normalizar(nome_pdv),
+                        resultado["id_loja"],
+                    )
                 )
         else:
-            nomes_banco.append("NÃO ENCONTRADO")
+            # mantém nome e id originais da base para comparação visual na saída
+            nomes_banco.append(
+                str(nome_pdv).strip()
+                if nome_pdv and str(nome_pdv).strip() not in ("", "nan", "None")
+                else "NÃO ENCONTRADO"
+            )
+            # mantém o id original para comparação visual na saída
+            cods_loja.append(id_original or "")
+            encontrados.append(False)
             chave_pend = f"{id_original}|{nome_pdv}"
             if chave_pend not in ids_pendentes:
                 ids_pendentes.add(chave_pend)
@@ -218,7 +257,9 @@ def cruzar_loja(df: pd.DataFrame, cfg: dict, cod_varejista: int) -> tuple:
     if col_original and col_original in df.columns and col_original != saida_id:
         df.rename(columns={col_original: saida_id}, inplace=True)
 
+    df[saida_cod] = cods_loja
     df[saida_nome] = nomes_banco
+    df["_LOJA_OK_"] = encontrados  # flag temporária usada por sinalizar_pendencias
 
     return df, pendencias, saida_id
 
@@ -282,24 +323,29 @@ def cruzar_varejista(df: pd.DataFrame, cfg: dict) -> tuple:
         cache = {k: v for k, v in cache.items() if v["cod"] in permitidos}
 
     nomes_saida = []
+    cods_saida = []
     novos = []
     vistos = set()
 
     for val in df[col_entrada].astype(str).str.strip():
         if val in ("", "nan", "None"):
             nomes_saida.append("")
+            cods_saida.append(0)
             continue
         norm = normalizar(val)
         match = cache.get(norm)
         if match:
             nomes_saida.append(match["nome"])
+            cods_saida.append(match["cod"])
         else:
             nomes_saida.append("NÃO ENCONTRADO")
+            cods_saida.append(0)
             if val not in vistos:
                 vistos.add(val)
                 novos.append(val)
 
     df[saida] = nomes_saida
+    df["_COD_VAR_"] = cods_saida  # coluna temporária para cruzar_loja
     return df, novos
 
 
@@ -337,21 +383,36 @@ def calcular_colunas(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     for col_saida, (col_a, operador, col_b) in cfg.items():
         if col_a not in df.columns or col_b not in df.columns:
             continue
+        # nunca sobrescrever uma coluna que é insumo do cálculo
+        dest = col_saida if col_saida not in (col_a, col_b) else col_saida + "_CALC"
         serie_a = pd.to_numeric(df[col_a], errors="coerce")
         serie_b = pd.to_numeric(df[col_b], errors="coerce")
         if operador == "/":
-            df[col_saida] = (serie_a / serie_b.replace(0, None)).round(4)
+            df[dest] = (serie_a / serie_b.replace(0, None)).round(4)
         elif operador == "*":
-            df[col_saida] = (serie_a * serie_b).round(4)
+            df[dest] = (serie_a * serie_b).round(4)
         elif operador == "+":
-            df[col_saida] = (serie_a + serie_b).round(4)
+            df[dest] = (serie_a + serie_b).round(4)
         elif operador == "-":
-            df[col_saida] = (serie_a - serie_b).round(4)
+            df[dest] = (serie_a - serie_b).round(4)
     return df
 
 
-def adicionar_colunas_novas(df: pd.DataFrame, novas: list) -> pd.DataFrame:
-    """Adiciona colunas novas (vazia, valor fixo, ano atual)."""
+def adicionar_colunas_novas(
+    df: pd.DataFrame, novas: list, rename_map: dict | None = None
+) -> pd.DataFrame:
+    """Adiciona colunas novas (vazia, valor fixo, ano atual, calcular_quantidade)."""
+    rename_map = rename_map or {}
+
+    def _resolver(col: str) -> str:
+        """Retorna o nome real da coluna no df: original ou pós-renomeação."""
+        if col in df.columns:
+            return col
+        renamed = rename_map.get(col)
+        if renamed and renamed in df.columns:
+            return renamed
+        return col
+
     for nova in novas:
         col_saida = nova["coluna_saida"]
         tipo = nova["tipo_acao"]
@@ -363,6 +424,21 @@ def adicionar_colunas_novas(df: pd.DataFrame, novas: list) -> pd.DataFrame:
             df[col_saida] = formula
         elif tipo == "ano_atual":
             df[col_saida] = pd.Timestamp.now().year
+        elif tipo == "calcular_quantidade":
+            if "/" in formula:
+                partes = formula.split("/", 1)
+                col_a = _resolver(partes[0].strip())
+                col_b = _resolver(partes[1].strip())
+                if col_a in df.columns and col_b in df.columns:
+                    # nunca sobrescrever uma coluna que é insumo do cálculo
+                    dest = (
+                        col_saida
+                        if col_saida not in (col_a, col_b)
+                        else col_saida + "_CALC"
+                    )
+                    ser_a = pd.to_numeric(df[col_a], errors="coerce")
+                    ser_b = pd.to_numeric(df[col_b], errors="coerce")
+                    df[dest] = (ser_a / ser_b.replace(0, None)).round(4)
 
     return df
 
@@ -370,9 +446,17 @@ def adicionar_colunas_novas(df: pd.DataFrame, novas: list) -> pd.DataFrame:
 def sinalizar_pendencias(
     df: pd.DataFrame, pendencias: list, saida_nome: str
 ) -> pd.DataFrame:
-    """Adiciona coluna PENDENCIA nas linhas com BANCO = NÃO ENCONTRADO."""
-    if pendencias and saida_nome in df.columns:
+    """Adiciona coluna PENDENCIA com base na flag _LOJA_OK_ gerada por cruzar_loja."""
+    if "_LOJA_OK_" in df.columns:
+        df["PENDENCIA"] = df["_LOJA_OK_"].apply(
+            lambda ok: "IDENTIFICADA" if ok else "LOJA NAO IDENTIFICADA"
+        )
+        df.drop(columns=["_LOJA_OK_"], inplace=True)
+    elif saida_nome in df.columns:
+        # fallback para bases sem cruzar_loja
         df["PENDENCIA"] = df[saida_nome].apply(
-            lambda v: "LOJA NAO IDENTIFICADA" if v == "NÃO ENCONTRADO" else ""
+            lambda v: (
+                "LOJA NAO IDENTIFICADA" if v == "NÃO ENCONTRADO" else "IDENTIFICADA"
+            )
         )
     return df

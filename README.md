@@ -118,6 +118,7 @@ python engine/conexao.py
 ```
 
 Saída esperada:
+
 ```
 ✅ Conectado ao MySQL 8.x.x
 ```
@@ -142,14 +143,14 @@ Acesse no navegador: [http://localhost:8000](http://localhost:8000)
 
 ## Telas do app
 
-| Rota | Descrição |
-|---|---|
-| `/` | Upload da base e seleção do varejista |
-| `/resultado/download/{arquivo}` | Download do Excel tratado |
-| `/validacao/lojas?cod_varejista=1` | Vinculação manual de lojas pendentes |
-| `/resultado/historico` | Lista todos os arquivos gerados |
-| `/docs` | Documentação automática da API (Swagger) |
-| `/health` | Status do servidor e conexão com banco |
+| Rota                               | Descrição                                |
+| ---------------------------------- | ---------------------------------------- |
+| `/`                                | Upload da base e seleção do varejista    |
+| `/resultado/download/{arquivo}`    | Download do Excel tratado                |
+| `/validacao/lojas?cod_varejista=1` | Vinculação manual de lojas pendentes     |
+| `/resultado/historico`             | Lista todos os arquivos gerados          |
+| `/docs`                            | Documentação automática da API (Swagger) |
+| `/health`                          | Status do servidor e conexão com banco   |
 
 ---
 
@@ -157,14 +158,14 @@ Acesse no navegador: [http://localhost:8000](http://localhost:8000)
 
 ### Transformações aplicadas (base Scantech)
 
-| Coluna de entrada | Ação | Coluna de saída |
-|---|---|---|
-| `Mes de Data` | Separada em duas colunas | `MÊS` + `DATA` |
-| `Matrícula` + `Nome PDV` | Cruzamento com banco | `LOJA` (id_loja) + `BANCO` (nome_loja) |
-| `Código Barra` | Renomeada | `EAN` |
-| `Nome SKU` | Renomeada | `PRODUTO` |
-| `Vendas em valor` | Renomeada | `VALOR` |
-| *(nova)* | `VALOR ÷ Preço por Unidade` | `QUANTIDADE` |
+| Coluna de entrada        | Ação                        | Coluna de saída                        |
+| ------------------------ | --------------------------- | -------------------------------------- |
+| `Mes de Data`            | Separada em duas colunas    | `MÊS` + `DATA`                         |
+| `Matrícula` + `Nome PDV` | Cruzamento com banco        | `LOJA` (id_loja) + `BANCO` (nome_loja) |
+| `Código Barra`           | Renomeada                   | `EAN`                                  |
+| `Nome SKU`               | Renomeada                   | `PRODUTO`                              |
+| `Vendas em valor`        | Renomeada                   | `VALOR`                                |
+| _(nova)_                 | `VALOR ÷ Preço por Unidade` | `QUANTIDADE`                           |
 
 ### Estratégias de identificação de loja
 
@@ -184,6 +185,7 @@ Matches encontrados pelas estratégias 2 e 3 são salvos automaticamente como al
 ### Lojas pendentes
 
 Quando uma loja não é identificada automaticamente:
+
 - A linha recebe a marcação `⚠️ LOJA NÃO IDENTIFICADA` na coluna `PENDENCIA`
 - Uma aba separada `PENDENCIAS` é criada no Excel de saída
 - A tela `/validacao/lojas` permite vincular manualmente cada loja ao registro correto
@@ -225,16 +227,16 @@ O nome da chave (`"novo_cliente"`) precisa aparecer no nome do arquivo Excel env
 
 ## Dependências principais
 
-| Pacote | Versão | Uso |
-|---|---|---|
-| fastapi | 0.111.0 | Framework web |
-| uvicorn | 0.29.0 | Servidor ASGI |
-| mysql-connector-python | 8.3.0 | Conexão MySQL |
-| pandas | 2.2.0 | Leitura e transformação do Excel |
-| openpyxl | 3.1.2 | Escrita do Excel de saída |
-| python-dotenv | 1.0.0 | Variáveis de ambiente |
-| pydantic | 2.7.0 | Validação de dados |
-| unidecode | 1.3.7 | Normalização de texto |
+| Pacote                 | Versão  | Uso                              |
+| ---------------------- | ------- | -------------------------------- |
+| fastapi                | 0.111.0 | Framework web                    |
+| uvicorn                | 0.29.0  | Servidor ASGI                    |
+| mysql-connector-python | 8.3.0   | Conexão MySQL                    |
+| pandas                 | 2.2.0   | Leitura e transformação do Excel |
+| openpyxl               | 3.1.2   | Escrita do Excel de saída        |
+| python-dotenv          | 1.0.0   | Variáveis de ambiente            |
+| pydantic               | 2.7.0   | Validação de dados               |
+| unidecode              | 1.3.7   | Normalização de texto            |
 
 ---
 
@@ -244,4 +246,4 @@ O nome da chave (`"novo_cliente"`) precisa aparecer no nome do arquivo Excel env
 - [ ] Suporte a bases consolidadas (separação automática por varejista)
 - [ ] Dashboard com histórico de processamentos
 - [ ] Autenticação de usuário
-- [ ] Suporte a múltiplas abas no Excel de entrada
+- [ ] Suporte a múltiplas abas no Excel de entradas
