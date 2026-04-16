@@ -1,0 +1,28 @@
+# ── Credenciais e segredos ────────────────────────────────────────────────────
+.env
+.env.*
+*.enc
+security/usuarios.json
+
+# ── Logs de auditoria ─────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Arquivos temporários de processamento ────────────────────────────────────
+entradas/
+saidas/
+*.tmp
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# ── IDEs ──────────────────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea/

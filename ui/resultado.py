@@ -225,7 +225,7 @@ def tela_resultado(
                 txt_salvo.value = f"✅ Salvo em BASE/{nome_dest}"
                 txt_salvo.visible = True
                 page.update()
-                subprocess.Popen(f'explorer "{pasta_base}"')
+                subprocess.Popen(["explorer", os.path.normpath(pasta_base)])
             except Exception as ex:
                 txt_salvo.value = f"Erro ao salvar: {ex}"
                 txt_salvo.visible = True
@@ -284,7 +284,7 @@ def tela_resultado(
                 txt_salvo.value = f"✅ {len(salvos)} arquivo(s) salvos em BASE/"
                 txt_salvo.visible = True
                 page.update()
-                subprocess.Popen(f'explorer "{pasta_base}"')
+                subprocess.Popen(["explorer", os.path.normpath(pasta_base)])
             except Exception as ex:
                 txt_salvo.value = f"Erro ao salvar: {ex}"
                 txt_salvo.visible = True

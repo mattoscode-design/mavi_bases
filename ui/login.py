@@ -1,10 +1,42 @@
 import flet as ft
+import hashlib
+import hmac
+import json
+from pathlib import Path
 from ui import tema
 
-USUARIOS = {
-    "mavi_gabriel": "123456",
-    "admin": "admin123",
-}
+_USUARIOS_PATH = Path(__file__).parent.parent / "security" / "usuarios.json"
+_SALT = "mavi_salt_2026"
+
+
+def _verificar_senha(usuario: str, senha: str) -> bool:
+    """Verifica senha usando PBKDF2-SHA256. Nunca compara texto puro."""
+    try:
+        dados = json.loads(_USUARIOS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    hash_salvo = dados.get(usuario)
+    if not hash_salvo:
+        return False
+    hash_tentativa = hashlib.pbkdf2_hmac(
+        "sha256", senha.encode(), _SALT.encode(), 100_000
+    ).hex()
+    # comparação em tempo constante para evitar timing attack
+    return hmac.compare_digest(hash_tentativa, hash_salvo)
+
+
+def adicionar_usuario(usuario: str, senha: str):
+    """Adiciona ou atualiza um usuário no arquivo de credenciais."""
+    try:
+        dados = json.loads(_USUARIOS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        dados = {}
+    dados[usuario] = hashlib.pbkdf2_hmac(
+        "sha256", senha.encode(), _SALT.encode(), 100_000
+    ).hex()
+    _USUARIOS_PATH.write_text(
+        json.dumps(dados, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
 
 def tela_login(page: ft.Page, on_sucesso):
@@ -23,7 +55,7 @@ def tela_login(page: ft.Page, on_sucesso):
             page.update()
             return
 
-        if USUARIOS.get(usuario) != senha:
+        if not _verificar_senha(usuario, senha):
             txt_erro.value = "Usuário ou senha incorretos."
             txt_erro.visible = True
             inp_senha.value = ""
