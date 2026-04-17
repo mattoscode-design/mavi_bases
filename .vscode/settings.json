@@ -15,5 +15,8 @@
             "username": "root",
             "askForPassword": true
         }
-    ]
+    ],
+    "chat.tools.terminal.autoApprove": {
+        "Set-ExecutionPolicy": true
+    }
 }

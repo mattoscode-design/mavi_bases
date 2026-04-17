@@ -7,7 +7,8 @@ from tkinter import filedialog
 from datetime import datetime
 from ui import tema
 from engine.conexao import get_conexao
-from engine.processador import processar_base
+from engine.processador import processar_base, preview_base
+from engine import mapeamento_loader
 from config import PASTA_ENTRADA
 from security.sanitizacao import sanitizar_nome_arquivo, validar_extensao_excel
 
@@ -31,6 +32,7 @@ def tela_upload(page: ft.Page, usuario: str, banco: str, on_voltar, on_resultado
     varejistas = buscar_varejistas()
     arquivo_path = [None]
     processando = [False]
+    cancelado = threading.Event()
 
     dd_varejista = ft.Dropdown(
         label="Varejista",
@@ -47,6 +49,24 @@ def tela_upload(page: ft.Page, usuario: str, banco: str, on_voltar, on_resultado
         border_radius=8,
     )
 
+    txt_sem_mapeamento = ft.Text(
+        "⚠️  Varejista sem mapeamento — configure antes de processar.",
+        size=12,
+        color=tema.WARN,
+        visible=False,
+    )
+
+    def _checar_mapeamento(e):
+        if not dd_varejista.value:
+            txt_sem_mapeamento.visible = False
+            page.update()
+            return
+        cfg = mapeamento_loader.carregar(int(dd_varejista.value))
+        txt_sem_mapeamento.visible = cfg is None
+        page.update()
+
+    dd_varejista.on_change = _checar_mapeamento
+
     txt_arquivo = ft.Text("Nenhum arquivo selecionado", size=13, color=tema.TEXT_MUTED)
     txt_erro = ft.Text("", color=tema.DANGER, size=13, visible=False)
     txt_status = ft.Text("", size=12, color=tema.TEXT_MUTED, visible=False)
@@ -60,7 +80,7 @@ def tela_upload(page: ft.Page, usuario: str, banco: str, on_voltar, on_resultado
         visible=False,
     )
 
-    def abrir_seletor_arquivo():
+    def arquivo_selecionado():
         root = tk.Tk()
         root.withdraw()
         root.attributes("-topmost", True)
@@ -69,10 +89,6 @@ def tela_upload(page: ft.Page, usuario: str, banco: str, on_voltar, on_resultado
             title="Selecionar base Excel",
         )
         root.destroy()
-        return caminho
-
-    def arquivo_selecionado():
-        caminho = abrir_seletor_arquivo()
         if caminho:
             arquivo_path[0] = caminho
             txt_arquivo.value = os.path.basename(caminho)
@@ -113,6 +129,7 @@ def tela_upload(page: ft.Page, usuario: str, banco: str, on_voltar, on_resultado
         barra_progresso.value = 0
         barra_progresso.visible = True
         btn_processar.disabled = True
+        btn_cancelar.visible = True
         page.update()
 
         navegou = [False]
@@ -136,6 +153,8 @@ def tela_upload(page: ft.Page, usuario: str, banco: str, on_voltar, on_resultado
                 nome_varejista,
                 on_status=atualizar_status,
             )
+            if cancelado.is_set():
+                return
             if not resultado.get("ok"):
                 txt_erro.value = resultado.get("erro", "Erro desconhecido")
                 txt_erro.visible = True
@@ -153,15 +172,21 @@ def tela_upload(page: ft.Page, usuario: str, banco: str, on_voltar, on_resultado
             on_resultado(resultado, nome_varejista, cod_varejista)
 
         except Exception as ex:
-            txt_erro.value = f"Erro ao processar: {ex}"
+            print(f"[ERRO] processamento: {ex}")
+            import traceback
+
+            traceback.print_exc()
+            txt_erro.value = "Ocorreu um erro durante o processamento."
             txt_erro.visible = True
             page.update()
         finally:
+            cancelado.clear()
             if not navegou[0]:
                 processando[0] = False
                 barra_progresso.value = 0
                 barra_progresso.visible = False
                 btn_processar.disabled = False
+                btn_cancelar.visible = False
                 txt_status.visible = False
                 page.update()
 
@@ -170,12 +195,142 @@ def tela_upload(page: ft.Page, usuario: str, banco: str, on_voltar, on_resultado
         target=iniciar_processamento, daemon=True
     ).start()
 
+    btn_preview = tema.btn_outline("Pré-visualizar (10 linhas)", largura=280)
+
+    btn_cancelar = ft.OutlinedButton(
+        "Cancelar processamento",
+        visible=False,
+        width=280,
+        style=ft.ButtonStyle(
+            color=tema.DANGER,
+            side=ft.BorderSide(color=tema.DANGER, width=1),
+            shape=ft.RoundedRectangleBorder(radius=20),
+            padding=ft.padding.symmetric(vertical=12, horizontal=24),
+        ),
+    )
+
+    def _cancelar(e):
+        cancelado.set()
+        btn_cancelar.disabled = True
+        txt_status.value = "Cancelando após etapa atual..."
+        txt_status.visible = True
+        page.update()
+
+    btn_cancelar.on_click = _cancelar
+
+    def iniciar_preview(e):
+        if not dd_varejista.value:
+            txt_erro.value = "Selecione um varejista antes de pré-visualizar."
+            txt_erro.visible = True
+            page.update()
+            return
+        if not arquivo_path[0]:
+            txt_erro.value = "Selecione um arquivo Excel antes de pré-visualizar."
+            txt_erro.visible = True
+            page.update()
+            return
+
+        txt_erro.visible = False
+        txt_status.value = "Gerando pré-visualização..."
+        txt_status.visible = True
+        btn_preview.disabled = True
+        page.update()
+
+        def _run():
+            cod = int(dd_varejista.value)
+            res = preview_base(arquivo_path[0], cod)
+            btn_preview.disabled = False
+            txt_status.visible = False
+
+            if not res["ok"]:
+                txt_erro.value = f"Erro na pré-visualização: {res['erro']}"
+                txt_erro.visible = True
+                page.update()
+                return
+
+            colunas = res["colunas"]
+            linhas = res["linhas"]
+
+            # monta tabela de dados
+            header_cells = [
+                ft.DataColumn(
+                    ft.Text(c, size=11, color=tema.TEAL, weight=ft.FontWeight.W_600)
+                )
+                for c in colunas
+            ]
+            rows = [
+                ft.DataRow(
+                    cells=[
+                        ft.DataCell(ft.Text(str(v), size=11, color=tema.TEXT))
+                        for v in linha
+                    ]
+                )
+                for linha in linhas
+            ]
+
+            tabela = ft.DataTable(
+                columns=header_cells,
+                rows=rows,
+                border=ft.border.all(1, tema.BORDER),
+                border_radius=8,
+                column_spacing=16,
+                data_row_min_height=32,
+                heading_row_color={ft.ControlState.DEFAULT: tema.BG3},
+            )
+
+            dlg = ft.AlertDialog(
+                modal=True,
+                title=ft.Text(
+                    f"Pré-visualização — {len(linhas)} linha(s)",
+                    size=15,
+                    color=tema.TEXT,
+                    weight=ft.FontWeight.W_600,
+                ),
+                content=ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Text(
+                                f"{len(colunas)} colunas após transformações.",
+                                size=12,
+                                color=tema.TEXT_MUTED,
+                            ),
+                            ft.Container(height=8),
+                            ft.Row(
+                                [tabela],
+                                scroll=ft.ScrollMode.ADAPTIVE,
+                            ),
+                        ],
+                        scroll=ft.ScrollMode.AUTO,
+                    ),
+                    width=700,
+                    height=420,
+                ),
+                actions=[
+                    ft.TextButton(
+                        "Fechar",
+                        style=ft.ButtonStyle(color=tema.TEAL),
+                        on_click=lambda ev: (page.close(dlg), page.update()),
+                    )
+                ],
+                bgcolor=tema.BG2,
+                shape=ft.RoundedRectangleBorder(radius=12),
+            )
+            page.overlay.append(dlg)
+            dlg.open = True
+            page.update()
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    btn_preview.on_click = iniciar_preview
+
     area_arquivo = ft.Container(
         content=ft.Column(
             [
                 ft.Icon(ft.Icons.UPLOAD_FILE, color=tema.TEAL, size=32),
                 ft.Text(
-                    "Clique para selecionar arquivo Excel", size=13, color=tema.TEXT
+                    "Clique para selecionar ou solte o arquivo aqui",
+                    size=13,
+                    color=tema.TEXT,
                 ),
                 ft.Text(".xlsx ou .xls", size=12, color=tema.TEXT_MUTED),
                 txt_arquivo,
@@ -201,6 +356,7 @@ def tela_upload(page: ft.Page, usuario: str, banco: str, on_voltar, on_resultado
                     [
                         ft.Container(height=16),
                         dd_varejista,
+                        txt_sem_mapeamento,
                         ft.Container(height=12),
                         area_arquivo,
                         ft.Container(height=8),
@@ -209,6 +365,9 @@ def tela_upload(page: ft.Page, usuario: str, banco: str, on_voltar, on_resultado
                         barra_progresso,
                         ft.Container(height=12),
                         btn_processar,
+                        btn_cancelar,
+                        ft.Container(height=6),
+                        btn_preview,
                         ft.Container(expand=True),
                     ],
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,

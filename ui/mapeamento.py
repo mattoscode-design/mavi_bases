@@ -857,6 +857,7 @@ def _abrir_configurador(
                 inp.hint_text = "ex: MÊS|ANO"
             elif e.control.value == "cruzar_ean":
                 inp.hint_text = "ex: SETOR_PRODUTO"
+                inp.value = "EAN"
             elif e.control.value == "calcular_quantidade":
                 inp.hint_text = "ex: QUANTIDADE"
                 formula_inp.hint_text = "ex: VALOR/Preco Unit"

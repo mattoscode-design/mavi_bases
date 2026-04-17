@@ -141,15 +141,15 @@ def separar_mes_ano(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
 
 def cruzar_loja(df: pd.DataFrame, cfg: dict, cod_varejista: int) -> tuple:
     """
-    Cruza matrícula/id com o banco:
+    Cruza matrícula/id com o banco usando operações vetorizadas (pandas .map).
     - Renomeia a coluna original para LOJA (mantém valor original da base)
     - Cria coluna COD_LOJA com o id_loja encontrado no banco
     - Cria coluna BANCO com o nome da loja encontrada no banco
-    - Se não achar: BANCO fica 'NÃO ENCONTRADO' e sinaliza como pendência
+    - Se não achar: BANCO fica o nome PDV ou 'NÃO ENCONTRADO', e COD_LOJA fica
+      com o id original para comparação visual
     Quando _COD_VAR_ existe no df usa o cod_varejista por linha para aliases.
     Retorna (df, pendencias, saida_id).
     """
-    pendencias = []
     saida_id = cfg.get("saida_id", "LOJA")
     saida_nome = cfg.get("saida_nome", "BANCO")
     saida_cod = cfg.get("saida_cod", "COD_LOJA")
@@ -159,107 +159,146 @@ def cruzar_loja(df: pd.DataFrame, cfg: dict, cod_varejista: int) -> tuple:
     col_nome = cfg.get("coluna_nome")
     col_original = col_id_direto or col_matricula or col_nome
 
-    # detecta se temos varejistas por linha (base consolidada)
     tem_cod_var = "_COD_VAR_" in df.columns
 
-    nomes_banco = []
-    cods_loja = []
-    encontrados = []  # True = loja identificada, False = pendência
-    ids_pendentes = set()
-    novos_aliases = set()
+    # ── 1. Carrega cache e achata em dicts simples ────────────────────────────
     cache_global = carregar_cache(cod_varejista)
-    # cache por varejista específico (para aliases corretos em bases consolidadas)
-    cache_por_var: dict = {}
 
-    def _get_cache(cv: int):
-        if cv == 0 or cv == cod_varejista:
-            return cache_global
-        if cv not in cache_por_var:
-            cache_por_var[cv] = carregar_cache(cv)
-        return cache_por_var[cv]
-
-    cols = list(df.columns)
-    idx_id_direto = cols.index(col_id_direto) if col_id_direto in cols else None
-    idx_matricula = cols.index(col_matricula) if col_matricula in cols else None
-    idx_nome = cols.index(col_nome) if col_nome in cols else None
-    idx_cod_var = cols.index("_COD_VAR_") if tem_cod_var else None
-
-    for row in df.itertuples(index=False, name=None):
-        id_direto = row[idx_id_direto] if idx_id_direto is not None else None
-        matricula = row[idx_matricula] if idx_matricula is not None else None
-        nome_pdv = row[idx_nome] if idx_nome is not None else ""
-        cv = int(row[idx_cod_var]) if idx_cod_var is not None else cod_varejista
-
-        # captura id original de forma segura
-        id_original = None
-        if id_direto is not None and str(id_direto).strip() not in ("", "nan", "None"):
-            id_original = str(id_direto).strip()
-        elif matricula is not None and str(matricula).strip() not in (
-            "",
-            "nan",
-            "None",
-        ):
-            id_original = str(matricula).strip()
-
-        cache_linha = _get_cache(cv)
-        resultado = identificar_loja(
-            matricula,
-            nome_pdv,
-            cv if tem_cod_var else cod_varejista,
-            id_direto=id_direto,
-            cache=cache_linha,
+    def _flat(cache):
+        """Achata cache de tuplas (id, nome) em 6 dicts separados."""
+        return (
+            {k: v[0] for k, v in cache["id_loja"].items()},
+            {k: v[1] for k, v in cache["id_loja"].items()},
+            {k: v[0] for k, v in cache["cluster_9"].items()},
+            {k: v[1] for k, v in cache["cluster_9"].items()},
+            {k: v[0] for k, v in cache["alias"].items()},
+            {k: v[1] for k, v in cache["alias"].items()},
         )
 
-        if resultado["encontrado"]:
-            nomes_banco.append(resultado["nome_loja"])
-            cods_loja.append(
-                str(resultado["id_loja"]) if resultado["id_loja"] is not None else ""
-            )
-            encontrados.append(True)
-            if resultado["estrategia"] in ("cluster_9", "numero_no_nome") and nome_pdv:
-                novos_aliases.add(
-                    (
-                        cv if tem_cod_var else cod_varejista,
-                        normalizar(nome_pdv),
-                        resultado["id_loja"],
-                    )
-                )
-        else:
-            # mantém nome e id originais da base para comparação visual na saída
-            nomes_banco.append(
-                str(nome_pdv).strip()
-                if nome_pdv and str(nome_pdv).strip() not in ("", "nan", "None")
-                else "NÃO ENCONTRADO"
-            )
-            # mantém o id original para comparação visual na saída
-            cods_loja.append(id_original or "")
-            encontrados.append(False)
-            chave_pend = f"{id_original}|{nome_pdv}"
-            if chave_pend not in ids_pendentes:
-                ids_pendentes.add(chave_pend)
-                pendencias.append(
-                    {
-                        "chave": chave_pend,
-                        "id_original": id_original or "NÃO IDENTIFICADO",
-                        "matricula": (
-                            str(matricula).strip()
-                            if matricula and str(matricula) not in ("nan", "None")
-                            else ""
-                        ),
-                        "nome_pdv": nome_pdv,
-                        "id_loja": resultado.get("id_loja"),
-                    }
-                )
+    id_to_id, id_to_nome, c9_to_id, c9_to_nome, alias_to_id_g, alias_to_nome_g = _flat(
+        cache_global
+    )
+
+    # ── 2. Prepara séries de chave (NA onde valor é inválido) ─────────────────
+    _invalidos = {"", "nan", "None"}
+
+    def _prep(col):
+        if col and col in df.columns:
+            s = df[col].astype(str).str.strip()
+            return s.where(~s.isin(_invalidos), other=pd.NA)
+        return pd.Series(pd.NA, index=df.index, dtype=object)
+
+    id_s = _prep(col_id_direto)
+    mat_s = _prep(col_matricula)
+
+    if col_nome and col_nome in df.columns:
+        nome_s_raw = df[col_nome].astype(str).str.strip()
+    else:
+        nome_s_raw = pd.Series("", index=df.index, dtype=str)
+
+    nome_norm_s = nome_s_raw.apply(
+        lambda v: normalizar(v) if v and v not in _invalidos else pd.NA
+    )
+    # Estratégia 3: primeiro número no nome (ex: "PDV 042" → "42")
+    num_from_nome = nome_s_raw.str.extract(r"(\d+)", expand=False)
+
+    # ── 3. Estratégias 0-3 (vectorizadas, usando cache global) ───────────────
+    s0_id, s0_nome = id_s.map(id_to_id), id_s.map(id_to_nome)
+    s1_id, s1_nome = mat_s.map(id_to_id), mat_s.map(id_to_nome)
+    s2_id, s2_nome = mat_s.map(c9_to_id), mat_s.map(c9_to_nome)
+    s3_id, s3_nome = num_from_nome.map(id_to_id), num_from_nome.map(id_to_nome)
+
+    # ── 4. Estratégia 4 (alias — varia por cod_varejista em bases consolidadas)
+    if tem_cod_var:
+        s4_id = pd.Series(pd.NA, index=df.index, dtype=object)
+        s4_nome = pd.Series(pd.NA, index=df.index, dtype=object)
+        caches_var: dict = {cod_varejista: cache_global}
+        for cv, idx_g in df.groupby("_COD_VAR_").groups.items():
+            cv_int = int(cv)
+            if cv_int not in caches_var:
+                caches_var[cv_int] = carregar_cache(cv_int)
+            _, _, _, _, a_id, a_nome = _flat(caches_var[cv_int])
+            s4_id.loc[idx_g] = nome_norm_s.loc[idx_g].map(a_id)
+            s4_nome.loc[idx_g] = nome_norm_s.loc[idx_g].map(a_nome)
+    else:
+        s4_id = nome_norm_s.map(alias_to_id_g)
+        s4_nome = nome_norm_s.map(alias_to_nome_g)
+
+    # ── 5. Combina estratégias (primeira não-nula vence) ──────────────────────
+    result_id = s0_id.fillna(s1_id).fillna(s2_id).fillna(s3_id).fillna(s4_id)
+    result_nome = (
+        s0_nome.fillna(s1_nome).fillna(s2_nome).fillna(s3_nome).fillna(s4_nome)
+    )
+    encontrados = result_id.notna()
+
+    # ── 6. Salva novos aliases (cluster_9 ou numero_no_nome) ─────────────────
+    used_c9 = s2_id.notna() & s0_id.isna() & s1_id.isna()
+    used_num = s3_id.notna() & s0_id.isna() & s1_id.isna() & s2_id.isna()
+    save_mask = (used_c9 | used_num) & nome_norm_s.notna()
+
+    novos_aliases: set = set()
+    if save_mask.any():
+        cv_col = (
+            df["_COD_VAR_"].astype(int)
+            if tem_cod_var
+            else pd.Series(cod_varejista, index=df.index)
+        )
+        for i in df.index[save_mask]:
+            nome_v = nome_norm_s.at[i]
+            id_v = result_id.at[i]
+            if pd.notna(nome_v) and pd.notna(id_v):
+                novos_aliases.add((int(cv_col.at[i]), str(nome_v), id_v))
 
     if novos_aliases:
         salvar_aliases(cod_varejista, list(novos_aliases))
 
+    # ── 7. Monta colunas finais ───────────────────────────────────────────────
+    id_original_s = id_s.fillna(mat_s)
+
+    # COD_LOJA: se encontrou → str(id_loja); se não → id_original ou ""
+    final_cod = result_id.apply(lambda v: str(v) if pd.notna(v) else None).fillna(
+        id_original_s.fillna("")
+    )
+
+    # BANCO: se encontrou → nome banco; se não → nome_pdv ou "NÃO ENCONTRADO"
+    nome_fallback = nome_s_raw.where(
+        nome_s_raw.notna() & ~nome_s_raw.isin(_invalidos),
+        other="NÃO ENCONTRADO",
+    )
+    final_nome = result_nome.where(encontrados, other=nome_fallback)
+
+    # ── 8. Pendências (itera somente sobre as linhas não encontradas) ─────────
+    pendencias = []
+    seen: set = set()
+    for i in df.index[~encontrados]:
+        id_orig = str(id_original_s.at[i]) if pd.notna(id_original_s.at[i]) else ""
+        nome_pdv = str(nome_s_raw.at[i]) if nome_s_raw.at[i] not in _invalidos else ""
+        mat_val = ""
+        if col_matricula and col_matricula in df.columns:
+            v = df.at[i, col_matricula]
+            mat_val = str(v).strip() if str(v) not in ("nan", "None") else ""
+        chave = f"{id_orig}|{nome_pdv}"
+        if chave not in seen:
+            seen.add(chave)
+            pendencias.append(
+                {
+                    "chave": chave,
+                    "id_original": id_orig or "NÃO IDENTIFICADO",
+                    "matricula": mat_val,
+                    "nome_pdv": nome_pdv,
+                    "id_loja": None,
+                }
+            )
+
+    # ── 9. Aplica ao DataFrame ────────────────────────────────────────────────
     if col_original and col_original in df.columns and col_original != saida_id:
         df.rename(columns={col_original: saida_id}, inplace=True)
 
-    df[saida_cod] = cods_loja
-    df[saida_nome] = nomes_banco
-    df["_LOJA_OK_"] = encontrados  # flag temporária usada por sinalizar_pendencias
+    df[saida_cod] = final_cod.values
+    df[saida_nome] = final_nome.values
+    df["_LOJA_OK_"] = (
+        encontrados.values
+    )  # flag temporária usada por sinalizar_pendencias
 
     return df, pendencias, saida_id
 
@@ -322,30 +361,41 @@ def cruzar_varejista(df: pd.DataFrame, cfg: dict) -> tuple:
     if permitidos:
         cache = {k: v for k, v in cache.items() if v["cod"] in permitidos}
 
-    nomes_saida = []
-    cods_saida = []
-    novos = []
-    vistos = set()
+    # ── Vectorizado ───────────────────────────────────────────────────────────
+    _invalidos = {"", "nan", "None"}
+    vals = df[col_entrada].astype(str).str.strip()
 
-    for val in df[col_entrada].astype(str).str.strip():
-        if val in ("", "nan", "None"):
-            nomes_saida.append("")
-            cods_saida.append(0)
-            continue
-        norm = normalizar(val)
-        match = cache.get(norm)
-        if match:
-            nomes_saida.append(match["nome"])
-            cods_saida.append(match["cod"])
-        else:
-            nomes_saida.append("NÃO ENCONTRADO")
-            cods_saida.append(0)
-            if val not in vistos:
-                vistos.add(val)
-                novos.append(val)
+    norm_series = vals.apply(lambda v: normalizar(v) if v not in _invalidos else pd.NA)
 
-    df[saida] = nomes_saida
-    df["_COD_VAR_"] = cods_saida  # coluna temporária para cruzar_loja
+    nome_map = {k: v["nome"] for k, v in cache.items()}
+    cod_map = {k: v["cod"] for k, v in cache.items()}
+
+    nomes_saida = norm_series.map(nome_map).where(norm_series.notna(), other="")
+    cods_saida = (
+        norm_series.map(cod_map)
+        .where(norm_series.notna(), other=0)
+        .fillna(0)
+        .astype(int)
+    )
+
+    # onde cache não achou → "NÃO ENCONTRADO" (notna + nome ausente)
+    nao_vazio = norm_series.notna()
+    nao_achou = nao_vazio & nomes_saida.isna()
+    nomes_saida = (
+        nomes_saida.fillna(
+            vals.where(nao_achou, other="").where(
+                ~nao_achou | vals.isin(_invalidos), other="NÃO ENCONTRADO"
+            )
+        )
+        .where(nao_vazio, other="")
+        .fillna("")
+    )
+
+    # lista de novos (únicos)
+    novos = list(vals[nao_achou].unique())
+
+    df[saida] = nomes_saida.values
+    df["_COD_VAR_"] = cods_saida.values  # coluna temporária para cruzar_loja
     return df, novos
 
 

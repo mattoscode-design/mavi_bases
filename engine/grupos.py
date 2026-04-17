@@ -4,10 +4,17 @@ Um grupo é um conjunto nomeado de varejistas para uso no cruzar_varejista.
 """
 
 from engine.conexao import get_conexao
+from engine.logger import get_logger
+
+_log = get_logger("grupos")
+_tabelas_garantidas = False
 
 
 def _garantir_tabelas():
-    """Cria as tabelas de grupos caso ainda não existam."""
+    """Cria as tabelas de grupos caso ainda não existam — executa apenas uma vez por processo."""
+    global _tabelas_garantidas
+    if _tabelas_garantidas:
+        return
     conn = get_conexao()
     cursor = conn.cursor()
     cursor.execute(
@@ -32,6 +39,8 @@ def _garantir_tabelas():
     conn.commit()
     cursor.close()
     conn.close()
+    _tabelas_garantidas = True
+    _log.debug("Tabelas de grupos verificadas/criadas.")
 
 
 def carregar_grupos() -> list[dict]:

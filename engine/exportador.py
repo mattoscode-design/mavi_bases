@@ -2,6 +2,9 @@ import importlib.util
 import os
 import tempfile
 import pandas as pd
+from engine.logger import get_logger
+
+_log = get_logger("exportador")
 
 
 def salvar_excel(df: pd.DataFrame, pendencias: list, nome_varejista: str) -> str:
@@ -35,11 +38,22 @@ def salvar_excel(df: pd.DataFrame, pendencias: list, nome_varejista: str) -> str
                 df_pend.to_excel(writer, index=False, sheet_name="LOJAS NOVAS")
 
     try:
-        _escrever(engine)
-    except Exception:
-        if engine == "xlsxwriter":
-            _escrever("openpyxl")
-        else:
-            raise
+        try:
+            _escrever(engine)
+        except Exception:
+            if engine == "xlsxwriter":
+                _log.warning("xlsxwriter falhou, tentando openpyxl.")
+                _escrever("openpyxl")
+            else:
+                raise
+    except Exception as e:
+        _log.error(
+            "Falha ao escrever Excel temporário '%s': %s", caminho, e, exc_info=True
+        )
+        try:
+            os.unlink(caminho)
+        except OSError:
+            pass
+        raise
 
     return caminho

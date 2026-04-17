@@ -1,6 +1,201 @@
-# Agente de Bases
+# Mavi Bases
 
-Sistema de processamento e tratamento de bases Excel por varejista, com identificação automática de lojas via cruzamento com banco MySQL.
+Sistema desktop para processamento e tratamento de bases Excel por varejista, com identificação automática de lojas via cruzamento com banco MySQL.
+
+Construído com **Python 3.14 + Flet 0.84** (interface gráfica nativa).
+
+---
+
+## Estrutura do projeto
+
+```
+mavi_bases/
+├── app.py                        ← ponto de entrada do app Flet
+├── config.py                     ← variáveis de ambiente e paths
+├── requirements.txt              ← dependências Python
+├── .env                          ← credenciais (não versionado)
+├── .env.example                  ← modelo de .env
+├── .gitignore
+│
+├── engine/                       ← lógica de negócio / ETL
+│   ├── conexao.py                ← pool de conexões MySQL (thread-safe)
+│   ├── exportador.py             ← exportação para Excel
+│   ├── grupos.py                 ← gerenciamento de grupos de varejistas
+│   ├── logger.py                 ← logger centralizado (arquivo rotativo)
+│   ├── mapeamento_loader.py      ← carregamento de mapeamentos do banco
+│   ├── matcher.py                ← identificação de lojas (5 estratégias)
+│   ├── pendencias_store.py       ← persistência de pendências por banco
+│   ├── processador.py            ← orquestrador principal do pipeline ETL
+│   └── transformador.py          ← todas as transformações de dados
+│
+├── models/
+│   └── schemas.py                ← modelos Pydantic de entrada/saída
+│
+├── security/
+│   ├── audit.py                  ← log de ações por usuário
+│   ├── crypto.py                 ← criptografia de credenciais (Fernet)
+│   ├── limpeza.py                ← exclusão segura de arquivos temporários
+│   ├── sanitizacao.py            ← validação de paths e nomes de arquivo
+│   └── usuarios.json             ← hashes de senha (não versionado)
+│
+├── ui/                           ← telas Flet
+│   ├── tema.py                   ← design system (cores, botões, inputs)
+│   ├── login.py                  ← autenticação
+│   ├── banco.py                  ← seleção de banco de dados
+│   ├── modulos.py                ← menu principal
+│   ├── upload.py                 ← upload e processamento de bases
+│   ├── mapeamento.py             ← configuração de mapeamentos por varejista
+│   ├── resultado.py              ← exibição de resultados e download
+│   └── validacao.py              ← vinculação manual de lojas pendentes
+│
+├── entradas/                     ← arquivos recebidos (gerada automaticamente)
+└── saidas/                       ← arquivos processados (gerada automaticamente)
+```
+
+---
+
+## Pré-requisitos
+
+- Python 3.11+
+- MySQL 8.0+ com o banco restaurado
+- Tabelas que precisam existir no banco: `loja`, `varejista`
+  - `aliases_loja`, `mapeamento_coluna`, `varejista_grupo` são criadas automaticamente pelo app
+
+---
+
+## Instalação
+
+### 1. Clone o projeto
+
+```bash
+cd mavi_bases
+```
+
+### 2. Crie e ative o ambiente virtual
+
+```bash
+python -m venv .venv
+
+# Windows
+.venv\Scripts\activate
+```
+
+### 3. Instale as dependências
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Configure o `.env`
+
+Copie o modelo e preencha com suas credenciais MySQL:
+
+```bash
+cp .env.example .env
+```
+
+```
+DB_HOST=localhost
+DB_PORT=3306
+DB_NAME=nome_do_banco
+DB_USER=root
+DB_PASSWORD=sua_senha
+```
+
+### 5. Crie o primeiro usuário
+
+Execute uma vez no terminal Python:
+
+```python
+from ui.login import adicionar_usuario
+adicionar_usuario("seu_usuario", "sua_senha")
+```
+
+### 6. Rode o projeto
+
+```bash
+python app.py
+```
+
+> Arquivos processados são salvos em `saidas/` com o nome `<VAREJISTA>_<MÊS_ANO>.xlsx`.
+
+---
+
+## Fluxo de uso
+
+```
+Login → Selecionar banco → Menu principal
+                               ├── Tratamento de Bases
+                               │     ├── Selecionar varejista + arquivo Excel
+                               │     ├── Pré-visualizar (dry-run 10 linhas)
+                               │     └── Processar → Tela de resultado + download
+                               ├── Configurar Mapeamento
+                               ├── Lojas Pendentes (vinculação manual)
+                               └── Grupos de Varejistas
+```
+
+---
+
+## Funcionalidades principais
+
+### Processamento de bases Excel
+
+- Leitura robusta: detecta cabeçalho automaticamente + desunifica células mescladas
+- Separação de data em MÊS / ANO (8+ formatos suportados)
+- Cruzamento de lojas por 5 estratégias em cascata
+- Cruzamento de EAN com setor de produto
+- Cruzamento de varejistas em bases consolidadas
+- Conversão automática de numéricos (formato brasileiro `1.234,56`)
+- Colunas calculadas, renomeação, colunas novas com valor fixo
+- Sinalização de pendências na coluna `PENDENCIA`
+- Export para `.xlsx` com aba de lojas pendentes separada
+
+### Identificação de lojas — 5 estratégias
+
+1. ID direto (`coluna_id_direto`)
+2. Matrícula direta em `id_loja`
+3. `cluster_9`
+4. Número extraído do nome do PDV
+5. Alias salvo anteriormente
+
+### Mapeamento por varejista
+
+Configurado via interface, salvo no banco. Suporta:
+
+- Separar data, cruzar loja, cruzar EAN, cruzar varejista
+- Renomear colunas, calcular colunas, adicionar colunas novas
+- Ignorar colunas, colunas com valor fixo / ano atual
+
+### Pré-visualização (dry-run)
+
+Antes de processar, o botão **"Pré-visualizar"** executa todas as transformações nas primeiras 10 linhas e exibe o resultado em tabela — sem salvar nada.
+
+### Pendências persistidas
+
+Lojas não encontradas são salvas em `~/.mavi_bases/pendencias/<banco>.json` e sobrevivem a reinicializações. Ao vincular manualmente uma loja, ela é removida do arquivo.
+
+---
+
+## Segurança
+
+| Item           | Implementação                                        |
+| -------------- | ---------------------------------------------------- |
+| Senhas         | PBKDF2-SHA256, 100k iterações, `hmac.compare_digest` |
+| Credenciais DB | Arquivo `.env` fora do versionamento                 |
+| Rate limiting  | 5 tentativas de login por 60s por usuário            |
+| SQL injection  | Queries parametrizadas em todo o código              |
+| Path traversal | `sanitizacao.py` com validação de caminho            |
+| Arquivos temp  | Exclusão segura com sobrescrita de zeros             |
+| Audit log      | JSON mensal em `~/.mavi_bases/logs/`                 |
+
+---
+
+## Logs
+
+| Arquivo              | Localização           | Descrição                                 |
+| -------------------- | --------------------- | ----------------------------------------- |
+| `app.log`            | `~/.mavi_bases/logs/` | Log técnico rotativo (5 MB × 3 backups)   |
+| `audit_YYYY_MM.json` | `~/.mavi_bases/logs/` | Ações por usuário (login, processamentos) |
 
 ---
 

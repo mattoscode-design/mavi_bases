@@ -4,6 +4,8 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from engine.logger import get_logger
+from engine import pendencias_store
 from ui import tema
 from ui.login import tela_login
 from ui.banco import tela_banco
@@ -13,6 +15,8 @@ from ui.resultado import tela_resultado
 from ui.validacao import tela_validacao
 from security import audit, limpeza
 from config import PASTA_ENTRADA
+
+_log = get_logger("app")
 
 
 def main(page: ft.Page):
@@ -41,24 +45,7 @@ def main(page: ft.Page):
         try:
             controle = tela_fn()
         except Exception as ex:
-            import traceback
-
-            controle = ft.Column(
-                [
-                    ft.Icon(ft.Icons.ERROR_OUTLINE, color=tema.DANGER, size=48),
-                    ft.Text("Erro ao carregar tela", size=16, color=tema.DANGER),
-                    ft.Text(str(ex), size=12, color=tema.TEXT_MUTED),
-                    ft.Text(
-                        traceback.format_exc(),
-                        size=10,
-                        color=tema.TEXT_MUTED,
-                        selectable=True,
-                    ),
-                ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=8,
-                scroll=ft.ScrollMode.AUTO,
-            )
+            raise  # deixa propagar para o terminal
         page.controls.clear()
         page.controls.append(controle)
         page.update()
@@ -76,6 +63,8 @@ def main(page: ft.Page):
             para_login()
             return
         sessao["banco"] = banco
+        # carrega pendências persistidas para este banco
+        sessao["pendencias"] = pendencias_store.carregar(banco)
         audit.registrar(
             usuario=sessao["usuario"], acao="BANCO_SELECIONADO", banco=banco
         )
@@ -131,11 +120,14 @@ def main(page: ft.Page):
         sessao["cod_varejista"] = cod_varejista
 
         novas_pendencias = resultado.get("pendencias", [])
-        existentes = {p.get("chave") for p in sessao.get("pendencias", [])}
-        sessao["pendencias"] = [
-            *sessao.get("pendencias", []),
-            *[p for p in novas_pendencias if p.get("chave") not in existentes],
-        ]
+        # taga cada pendência com o varejista que a gerou
+        for _p in novas_pendencias:
+            _p.setdefault("cod_varejista", cod_varejista)
+            _p.setdefault("nome_varejista", nome_varejista)
+        # mescla e persiste no disco
+        sessao["pendencias"] = pendencias_store.mesclar(
+            sessao["banco"], novas_pendencias
+        )
 
         audit.registrar(
             usuario=sessao["usuario"],
