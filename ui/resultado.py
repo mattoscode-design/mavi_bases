@@ -254,12 +254,17 @@ def tela_resultado(
                     txt_salvo.visible = True
                     page.update()
                     return
+                serie_txt = df_out[col].astype(str).str.strip()
+                mask_nao_registrado = df_out[col].isna() | serie_txt.str.upper().isin(
+                    {"", "NÃO ENCONTRADO", "NAO ENCONTRADO", "NAN", "NONE"}
+                )
+
                 valores = [
                     v
-                    for v in df_out[col].dropna().unique()
-                    if str(v).strip() not in ("", "NÃO ENCONTRADO", "nan")
+                    for v in df_out.loc[~mask_nao_registrado, col].dropna().unique()
+                    if str(v).strip()
                 ]
-                if not valores:
+                if not valores and not mask_nao_registrado.any():
                     txt_salvo.value = "Nenhum varejista encontrado para separar."
                     txt_salvo.visible = True
                     page.update()
@@ -275,6 +280,17 @@ def tela_resultado(
                     dst = os.path.join(pasta_base, nome_dest)
                     df_var = df_out[df_out[col] == var]
                     df_var.to_excel(dst, index=False)
+                    salvos.append(nome_dest)
+
+                if mask_nao_registrado.any():
+                    nome_dest = (
+                        f"NAO_REGISTRADO_{mes_ref}.xlsx"
+                        if mes_ref
+                        else "NAO_REGISTRADO_BASE.xlsx"
+                    )
+                    dst = os.path.join(pasta_base, nome_dest)
+                    df_nao = df_out[mask_nao_registrado]
+                    df_nao.to_excel(dst, index=False)
                     salvos.append(nome_dest)
                 try:
                     os.remove(arquivo_state[0])
