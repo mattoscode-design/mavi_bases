@@ -8,7 +8,7 @@ from models.schemas import ResultadoProcessamento
 _log = get_logger("processador")
 
 
-def _ler_excel_robusto(caminho: str) -> pd.DataFrame:
+def _ler_excel_robusto(caminho: str, max_rows: int | None = None) -> pd.DataFrame:
     """
     Lê um arquivo Excel tratando células mescladas e cabeçalho fora da linha 1.
 
@@ -18,26 +18,30 @@ def _ler_excel_robusto(caminho: str) -> pd.DataFrame:
     2. Varre as primeiras 15 linhas para achar a linha de cabeçalho:
        a linha com mais células preenchidas e sem valores tipo "Unnamed".
     3. Lê o DataFrame a partir dessa linha.
+
+    max_rows: se informado, lê só até essa linha (para preview rápido).
     """
-    wb = openpyxl.load_workbook(caminho, data_only=True)
+    wb = openpyxl.load_workbook(caminho, data_only=True, read_only=max_rows is not None)
     ws = wb.active
 
-    # ── Desunifica células mescladas ─────────────────────────────────────────
-    for merged in list(ws.merged_cells.ranges):
-        min_row, min_col = merged.min_row, merged.min_col
-        valor_ancora = ws.cell(min_row, min_col).value
-        ws.unmerge_cells(str(merged))
-        for row in ws.iter_rows(
-            min_row=min_row,
-            max_row=merged.max_row,
-            min_col=min_col,
-            max_col=merged.max_col,
-        ):
-            for cell in row:
-                cell.value = valor_ancora
+    # ── Desunifica células mescladas (só no modo completo) ───────────────────
+    if max_rows is None:
+        for merged in list(ws.merged_cells.ranges):
+            min_row, min_col = merged.min_row, merged.min_col
+            valor_ancora = ws.cell(min_row, min_col).value
+            ws.unmerge_cells(str(merged))
+            for row in ws.iter_rows(
+                min_row=min_row,
+                max_row=merged.max_row,
+                min_col=min_col,
+                max_col=merged.max_col,
+            ):
+                for cell in row:
+                    cell.value = valor_ancora
 
-    # ── Converte para lista de listas ────────────────────────────────────────
-    dados = [[cell.value for cell in row] for row in ws.iter_rows()]
+    # ── Converte para lista de listas (limitando linhas no preview) ──────────
+    lim = (15 + max_rows) if max_rows is not None else None
+    dados = [[cell.value for cell in row] for row in ws.iter_rows(max_row=lim)]
     wb.close()
 
     if not dados:
@@ -103,7 +107,7 @@ def preview_base(caminho_arquivo: str, cod_varejista: int, n_linhas: int = 10) -
                 "erro": "Mapeamento não configurado.",
             }
 
-        df = _ler_excel_robusto(caminho_arquivo)
+        df = _ler_excel_robusto(caminho_arquivo, max_rows=n_linhas)
         df.columns = df.columns.str.strip()
         df = df.head(n_linhas)
 

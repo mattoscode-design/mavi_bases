@@ -237,8 +237,17 @@ def tela_upload(page: ft.Page, usuario: str, banco: str, on_voltar, on_resultado
         page.update()
 
         def _run():
-            cod = int(dd_varejista.value)
-            res = preview_base(arquivo_path[0], cod)
+            try:
+                cod = int(dd_varejista.value)
+                res = preview_base(arquivo_path[0], cod)
+            except Exception as ex:
+                txt_erro.value = f"Erro na pré-visualização: {ex}"
+                txt_erro.visible = True
+                btn_preview.disabled = False
+                txt_status.visible = False
+                page.update()
+                return
+
             btn_preview.disabled = False
             txt_status.visible = False
 
@@ -251,7 +260,6 @@ def tela_upload(page: ft.Page, usuario: str, banco: str, on_voltar, on_resultado
             colunas = res["colunas"]
             linhas = res["linhas"]
 
-            # monta tabela de dados
             header_cells = [
                 ft.DataColumn(
                     ft.Text(c, size=11, color=tema.TEAL, weight=ft.FontWeight.W_600)
@@ -276,6 +284,11 @@ def tela_upload(page: ft.Page, usuario: str, banco: str, on_voltar, on_resultado
                 column_spacing=16,
                 data_row_min_height=32,
                 heading_row_color={ft.ControlState.DEFAULT: tema.BG3},
+            )
+
+            btn_fechar = ft.TextButton(
+                "Fechar",
+                style=ft.ButtonStyle(color=tema.TEAL),
             )
 
             dlg = ft.AlertDialog(
@@ -305,16 +318,17 @@ def tela_upload(page: ft.Page, usuario: str, banco: str, on_voltar, on_resultado
                     width=700,
                     height=420,
                 ),
-                actions=[
-                    ft.TextButton(
-                        "Fechar",
-                        style=ft.ButtonStyle(color=tema.TEAL),
-                        on_click=lambda ev: (page.close(dlg), page.update()),
-                    )
-                ],
+                actions=[btn_fechar],
                 bgcolor=tema.BG2,
                 shape=ft.RoundedRectangleBorder(radius=12),
             )
+
+            def _fechar(_ev=None):
+                dlg.open = False
+                page.update()
+
+            btn_fechar.on_click = _fechar
+
             page.overlay.append(dlg)
             dlg.open = True
             page.update()

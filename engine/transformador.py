@@ -142,8 +142,9 @@ def separar_mes_ano(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
 def cruzar_loja(df: pd.DataFrame, cfg: dict, cod_varejista: int) -> tuple:
     """
     Cruza matrícula/id com o banco usando operações vetorizadas (pandas .map).
-    - Renomeia a coluna original para LOJA (mantém valor original da base)
-    - Cria coluna COD_LOJA com o id_loja encontrado no banco
+        - Mantém a coluna original da base sem renomear
+        - Cria coluna LOJA com o id_loja encontrado no banco
+        - Cria coluna COD_LOJA com o id_loja encontrado (ou fallback para comparação)
     - Cria coluna BANCO com o nome da loja encontrada no banco
     - Se não achar: BANCO fica o nome PDV ou 'NÃO ENCONTRADO', e COD_LOJA fica
       com o id original para comparação visual
@@ -157,7 +158,6 @@ def cruzar_loja(df: pd.DataFrame, cfg: dict, cod_varejista: int) -> tuple:
     col_id_direto = cfg.get("coluna_id_direto")
     col_matricula = cfg.get("coluna_matricula")
     col_nome = cfg.get("coluna_nome")
-    col_original = col_id_direto or col_matricula or col_nome
 
     tem_cod_var = "_COD_VAR_" in df.columns
 
@@ -291,9 +291,8 @@ def cruzar_loja(df: pd.DataFrame, cfg: dict, cod_varejista: int) -> tuple:
             )
 
     # ── 9. Aplica ao DataFrame ────────────────────────────────────────────────
-    if col_original and col_original in df.columns and col_original != saida_id:
-        df.rename(columns={col_original: saida_id}, inplace=True)
-
+    # LOJA: id do banco quando encontrado; fallback para valor original quando não encontrou
+    df[saida_id] = final_cod.values
     df[saida_cod] = final_cod.values
     df[saida_nome] = final_nome.values
     df["_LOJA_OK_"] = (

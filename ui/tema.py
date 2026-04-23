@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import flet as ft
 
 # ── Paleta Mavi ───────────────────────────────────────────────────────────────
@@ -14,14 +16,32 @@ WARN = "#e0a030"
 
 TEMA = ft.Theme(color_scheme_seed=TEAL)
 
+_ROOT_DIR = Path(__file__).resolve().parent.parent
+ASSETS_DIR = _ROOT_DIR / "assets"
+LOGO_PATH = str(ASSETS_DIR / "mavi_logo.png")
+MINI_LOGO_PATH = str(ASSETS_DIR / "minimavi_logo.png")
+MINI_ICON_PATH = str(ASSETS_DIR / "minimavi_logo.ico")
 
-def titulo_logo(size: int = 42) -> ft.Text:
-    return ft.Text(
-        "mavi",
-        size=size,
-        weight=ft.FontWeight.W_800,
-        color=TEAL,
-        italic=True,
+
+def logo_mavi(width: int = 220) -> ft.Image:
+    return ft.Image(
+        src=LOGO_PATH,
+        width=width,
+    )
+
+
+def mini_logo(width: int = 26) -> ft.Image:
+    return ft.Image(
+        src=MINI_LOGO_PATH,
+        width=width,
+    )
+
+
+def titulo_logo(size: int = 42) -> ft.Container:
+    width = max(140, int(size * 5.3))
+    return ft.Container(
+        content=logo_mavi(width=width),
+        alignment=ft.alignment.Alignment.CENTER,
     )
 
 
@@ -151,6 +171,8 @@ def navbar(titulo: str, banco: str, on_voltar=None) -> ft.Container:
                 on_click=on_voltar,
             )
         )
+    items.append(mini_logo())
+    items.append(ft.Container(width=8))
     items.append(ft.Text(titulo, size=15, weight=ft.FontWeight.W_500, color=TEXT))
     items.append(ft.Container(expand=True))
     items.append(ft.Text(banco, size=12, color=TEXT_MUTED))

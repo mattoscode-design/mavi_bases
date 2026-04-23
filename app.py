@@ -1,6 +1,7 @@
 import flet as ft
 import sys
 import os
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -25,6 +26,11 @@ def main(page: ft.Page):
     page.window.height = 650
     page.window.min_width = 600
     page.window.min_height = 480
+    page.window.icon = (
+        tema.MINI_ICON_PATH
+        if Path(tema.MINI_ICON_PATH).exists()
+        else tema.MINI_LOGO_PATH
+    )
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = tema.BG
     page.padding = 0

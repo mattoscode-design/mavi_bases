@@ -20,9 +20,7 @@ def tela_modulos(page: ft.Page, usuario: str, banco: str, on_modulo):
         tema.btn_outline(
             "Lojas Pendentes", on_click=lambda e: on_modulo("validacao"), largura=320
         ),
-        tema.btn_outline(
-            "📂 Grupos de Varejistas", on_click=_abrir_grupos, largura=320
-        ),
+        tema.btn_outline("Grupos de Varejistas", on_click=_abrir_grupos, largura=320),
     ]
 
     info = ft.Column(
@@ -109,6 +107,12 @@ def tela_modulos(page: ft.Page, usuario: str, banco: str, on_modulo):
         def _abrir_pasta(ev):
             subprocess.Popen(["explorer", os.path.normpath(str(_LOG_PATH.parent))])
 
+        def _fechar_log(ev=None):
+            dlg.open = False
+            if dlg in page.overlay:
+                page.overlay.remove(dlg)
+            page.update()
+
         dlg = ft.AlertDialog(
             modal=True,
             title=ft.Text(
@@ -124,7 +128,7 @@ def tela_modulos(page: ft.Page, usuario: str, banco: str, on_modulo):
                 ft.TextButton(
                     "Fechar",
                     style=ft.ButtonStyle(color=tema.TEAL),
-                    on_click=lambda ev: (page.close(dlg), page.update()),
+                    on_click=_fechar_log,
                 ),
             ],
             bgcolor=tema.BG2,
