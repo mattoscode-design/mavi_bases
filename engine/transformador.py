@@ -322,6 +322,11 @@ def cruzar_ean(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
         saida_setor = "SETOR_PRODUTO"
 
     if col_ean_real:
+        # Padroniza o nome da coluna de entrada usada no cruzamento para EAN.
+        if col_ean_real != "EAN" and "EAN" not in df.columns:
+            df.rename(columns={col_ean_real: "EAN"}, inplace=True)
+            col_ean_real = "EAN"
+
         valores = df[col_ean_real].astype(str).fillna("").str.strip()
         unicos = set(valores[valores != ""].unique())
         cache = carregar_setores_por_ean(unicos)
