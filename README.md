@@ -844,4 +844,3 @@ Quando uma loja e vinculada manualmente, o alias fica salvo e passa a ser reconh
 
 - manter o `.env` fora do versionamento
 - manter `usuarios.json` fora do Git
-- testar o app no `.venv` antes de atualizar dependencias
