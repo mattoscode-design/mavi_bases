@@ -1,6 +1,160 @@
 import time
 import pandas as pd
+import openpyxl
 from engine import mapeamento_loader, transformador, exportador
+from engine.logger import get_logger
+from models.schemas import ResultadoProcessamento
+
+_log = get_logger("processador")
+
+
+def _ler_excel_robusto(caminho: str, max_rows: int | None = None) -> pd.DataFrame:
+    """
+    Lê um arquivo Excel tratando células mescladas e cabeçalho fora da linha 1.
+
+    Estratégia:
+    1. Usa openpyxl para desunificar células mescladas (preenche o valor
+       da célula âncora em todas as células da região).
+    2. Varre as primeiras 15 linhas para achar a linha de cabeçalho:
+       a linha com mais células preenchidas e sem valores tipo "Unnamed".
+    3. Lê o DataFrame a partir dessa linha.
+
+    max_rows: se informado, lê só até essa linha (para preview rápido).
+    """
+    wb = openpyxl.load_workbook(caminho, data_only=True, read_only=max_rows is not None)
+    ws = wb.active
+
+    # ── Desunifica células mescladas (só no modo completo) ───────────────────
+    if max_rows is None:
+        for merged in list(ws.merged_cells.ranges):
+            min_row, min_col = merged.min_row, merged.min_col
+            valor_ancora = ws.cell(min_row, min_col).value
+            ws.unmerge_cells(str(merged))
+            for row in ws.iter_rows(
+                min_row=min_row,
+                max_row=merged.max_row,
+                min_col=min_col,
+                max_col=merged.max_col,
+            ):
+                for cell in row:
+                    cell.value = valor_ancora
+
+    # ── Converte para lista de listas (limitando linhas no preview) ──────────
+    lim = (15 + max_rows) if max_rows is not None else None
+    dados = [[cell.value for cell in row] for row in ws.iter_rows(max_row=lim)]
+    wb.close()
+
+    if not dados:
+        return pd.DataFrame()
+
+    # ── Detecta linha de cabeçalho (máx 15 linhas de prospecção) ─────────────
+    n_cols = max(len(r) for r in dados)
+    melhor_linha = 0
+    melhor_score = -1
+
+    for i, linha in enumerate(dados[:15]):
+        # score = n° de células com texto não nulo e não "Unnamed"
+        score = sum(
+            1
+            for v in linha
+            if v is not None
+            and str(v).strip() != ""
+            and not str(v).startswith("Unnamed")
+        )
+        if score > melhor_score:
+            melhor_score = score
+            melhor_linha = i
+
+    cabecalho = [str(v).strip() if v is not None else "" for v in dados[melhor_linha]]
+
+    # garante nomes únicos para colunas sem nome
+    seen: dict = {}
+    cabecalho_unico = []
+    for nome in cabecalho:
+        if nome == "" or nome == "None":
+            nome = "_COL_VAZIA_"
+        if nome in seen:
+            seen[nome] += 1
+            nome = f"{nome}_{seen[nome]}"
+        else:
+            seen[nome] = 0
+        cabecalho_unico.append(nome)
+
+    linhas_dados = dados[melhor_linha + 1 :]
+    df = pd.DataFrame(linhas_dados, columns=cabecalho_unico, dtype=object)
+
+    # remove colunas completamente vazias geradas por células mescladas de layout
+    df = df.loc[:, ~df.columns.str.startswith("_COL_VAZIA_")]
+    # remove linhas 100% vazias
+    df = df.dropna(how="all").reset_index(drop=True)
+
+    # converte tudo para string (compatível com o resto do pipeline)
+    return df.astype(str).replace("None", "").replace("nan", "")
+
+
+def preview_base(caminho_arquivo: str, cod_varejista: int, n_linhas: int = 10) -> dict:
+    """
+    Executa as transformações nas primeiras `n_linhas` da base sem exportar.
+    Retorna {"ok": bool, "colunas": list, "linhas": list[list], "erro": str|None}
+    """
+    try:
+        mapeamento = mapeamento_loader.carregar(cod_varejista)
+        if not mapeamento:
+            return {
+                "ok": False,
+                "colunas": [],
+                "linhas": [],
+                "erro": "Mapeamento não configurado.",
+            }
+
+        df = _ler_excel_robusto(caminho_arquivo, max_rows=n_linhas)
+        df.columns = df.columns.str.strip()
+        df = df.head(n_linhas)
+
+        ignorar = [c for c in mapeamento.get("ignorar", []) if c in df.columns]
+        if ignorar:
+            df.drop(columns=ignorar, inplace=True)
+
+        if mapeamento.get("separar"):
+            df = transformador.separar_mes_ano(df, mapeamento["separar"])
+
+        if mapeamento.get("cruzar_varejista"):
+            df, _ = transformador.cruzar_varejista(df, mapeamento["cruzar_varejista"])
+
+        if mapeamento.get("cruzar_loja"):
+            df, _, _ = transformador.cruzar_loja(
+                df, mapeamento["cruzar_loja"], cod_varejista
+            )
+
+        if mapeamento.get("cruzar_ean"):
+            df = transformador.cruzar_ean(df, mapeamento["cruzar_ean"])
+
+        if mapeamento.get("renomear"):
+            df = transformador.renomear_colunas(df, mapeamento["renomear"])
+
+        colunas_calc = set(mapeamento.get("calcular", {}).keys())
+        df = transformador.converter_numericos(df, colunas_calc)
+
+        if mapeamento.get("calcular"):
+            df = transformador.calcular_colunas(df, mapeamento["calcular"])
+
+        if mapeamento.get("novas"):
+            df = transformador.adicionar_colunas_novas(
+                df, mapeamento["novas"], mapeamento.get("renomear", {})
+            )
+
+        # remove colunas temporárias internas
+        for tmp in ("_LOJA_OK_", "_COD_VAR_"):
+            if tmp in df.columns:
+                df.drop(columns=[tmp], inplace=True)
+
+        colunas = list(df.columns)
+        linhas = df.fillna("").astype(str).values.tolist()
+        return {"ok": True, "colunas": colunas, "linhas": linhas, "erro": None}
+
+    except Exception as e:
+        _log.error("Erro no dry-run: %s", e, exc_info=True)
+        return {"ok": False, "colunas": [], "linhas": [], "erro": str(e)}
 
 
 def processar_base(
@@ -59,6 +213,11 @@ def processar_base(
     timings["load_mapping"] = time.perf_counter() - inicio
 
     if not mapeamento:
+        _log.warning(
+            "Mapeamento não encontrado para varejista %s (cod=%s)",
+            nome_varejista,
+            cod_varejista,
+        )
         return {
             "ok": False,
             "erro": f"Nenhum mapeamento configurado para '{nome_varejista}'. "
@@ -69,10 +228,11 @@ def processar_base(
     try:
         _status("Lendo arquivo Excel...")
         inicio = time.perf_counter()
-        df = pd.read_excel(caminho_arquivo, dtype=str)
+        df = _ler_excel_robusto(caminho_arquivo)
         df.columns = df.columns.str.strip()
         timings["read_excel"] = time.perf_counter() - inicio
     except Exception as e:
+        _log.error("Erro ao ler Excel '%s': %s", caminho_arquivo, e, exc_info=True)
         return {"ok": False, "erro": f"Erro ao ler o arquivo: {e}"}
 
     total_linhas = len(df)
@@ -247,24 +407,41 @@ def processar_base(
         arquivo_saida = exportador.salvar_excel(df, pendencias, nome_varejista)
         timings["exportar"] = time.perf_counter() - inicio
     except Exception as e:
+        _log.error(
+            "Erro ao exportar Excel para varejista %s: %s",
+            nome_varejista,
+            e,
+            exc_info=True,
+        )
         return {"ok": False, "erro": f"Erro ao salvar: {e}"}
 
     timings["total"] = time.perf_counter() - inicio_total
 
-    return {
-        "ok": True,
-        "arquivo_saida": arquivo_saida,
-        "total_linhas": total_linhas,
-        "lojas_unicas": int(lojas_unicas),
-        "lojas_ok": lojas_ok,
-        "lojas_novas": lojas_novas,
-        "total_valor": total_valor,
-        "total_quantidade": total_quantidade,
-        "setores": setores,
-        "pendencias": pendencias,
-        "varejistas_novos": varejistas_novos,
-        "mes_ref": mes_ref,
-        "coluna_varejista_saida": coluna_varejista_saida,
-        "erro": None,
-        "timings": timings,
-    }
+    # log de timings para diagnóstico de gargalos em produção
+    _log.info(
+        "Processamento '%s' concluído em %.2fs | linhas=%d lojas_ok=%d pendencias=%d | etapas: %s",
+        nome_varejista,
+        timings["total"],
+        total_linhas,
+        lojas_ok,
+        lojas_novas,
+        " | ".join(f"{k}={v:.3f}s" for k, v in timings.items() if k != "total"),
+    )
+
+    return ResultadoProcessamento(
+        ok=True,
+        arquivo_saida=arquivo_saida,
+        total_linhas=total_linhas,
+        lojas_unicas=int(lojas_unicas),
+        lojas_ok=lojas_ok,
+        lojas_novas=lojas_novas,
+        total_valor=total_valor,
+        total_quantidade=total_quantidade,
+        setores=setores,
+        pendencias=pendencias,
+        varejistas_novos=varejistas_novos,
+        mes_ref=mes_ref,
+        coluna_varejista_saida=coluna_varejista_saida,
+        erro=None,
+        timings=timings,
+    ).model_dump()

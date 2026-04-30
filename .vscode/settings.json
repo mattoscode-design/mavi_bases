@@ -15,5 +15,12 @@
             "username": "root",
             "askForPassword": true
         }
-    ]
+    ],
+    "chat.tools.terminal.autoApprove": {
+        "Set-ExecutionPolicy": true,
+        "/^Move-Item -Path \"c:\\\\Users\\\\Gabriel\\\\Documents\\\\mavi_bases\\\\mavi_logo\\.png\" -Destination \"c:\\\\Users\\\\Gabriel\\\\Documents\\\\mavi_bases\\\\assets\\\\mavi_logo\\.png\" ; Move-Item -Path \"c:\\\\Users\\\\Gabriel\\\\Documents\\\\mavi_bases\\\\minimavi_logo\\.png\" -Destination \"c:\\\\Users\\\\Gabriel\\\\Documents\\\\mavi_bases\\\\assets\\\\minimavi_logo\\.png\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
 }

@@ -2,11 +2,28 @@ import flet as ft
 import hashlib
 import hmac
 import json
+import time
 from pathlib import Path
 from ui import tema
 
 _USUARIOS_PATH = Path(__file__).parent.parent / "security" / "usuarios.json"
 _SALT = "mavi_salt_2026"
+
+# Rate limiting: máx 5 tentativas por 60 s por usuário
+_MAX_TENTATIVAS = 5
+_JANELA_SEG = 60
+_tentativas: dict = {}  # usuario -> [timestamps]
+
+
+def _bloqueado(usuario: str) -> bool:
+    """Retorna True se o usuário excedeu o limite de tentativas."""
+    agora = time.monotonic()
+    registros = [t for t in _tentativas.get(usuario, []) if agora - t < _JANELA_SEG]
+    _tentativas[usuario] = registros
+    if len(registros) >= _MAX_TENTATIVAS:
+        return True
+    registros.append(agora)
+    return False
 
 
 def _verificar_senha(usuario: str, senha: str) -> bool:
@@ -52,6 +69,13 @@ def tela_login(page: ft.Page, on_sucesso):
         if not usuario or not senha:
             txt_erro.value = "Preencha usuário e senha."
             txt_erro.visible = True
+            page.update()
+            return
+
+        if _bloqueado(usuario):
+            txt_erro.value = "Muitas tentativas. Aguarde 1 minuto e tente novamente."
+            txt_erro.visible = True
+            inp_senha.value = ""
             page.update()
             return
 

@@ -56,7 +56,39 @@ def tela_banco(page: ft.Page, usuario: str, on_sucesso):
     bancos = listar_bancos()
     dropdown = tema.dropdown_estilo("Selecione um banco", bancos)
     txt_erro = ft.Text("", color=tema.DANGER, size=13, visible=False)
+    txt_conexao = ft.Text("", size=12, color=tema.TEAL, visible=False)
     btn = tema.btn_primario("Conectar", largura=320)
+
+    def _testar_conexao(e):
+        if not dropdown.value:
+            txt_conexao.visible = False
+            page.update()
+            return
+        txt_conexao.value = "⏳ Testando conexão..."
+        txt_conexao.color = tema.TEXT_MUTED
+        txt_conexao.visible = True
+        page.update()
+
+        def _run():
+            from engine.conexao import configurar_banco, get_conexao
+
+            try:
+                configurar_banco(dropdown.value)
+                conn = get_conexao()
+                conn.close()
+                txt_conexao.value = "✅ Conexão bem-sucedida"
+                txt_conexao.color = tema.TEAL
+            except Exception:
+                txt_conexao.value = "❌ Falha na conexão — verifique as credenciais"
+                txt_conexao.color = tema.DANGER
+            txt_conexao.visible = True
+            page.update()
+
+        import threading
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    dropdown.on_change = _testar_conexao
 
     def conectar(e):
         banco = dropdown.value
@@ -65,15 +97,6 @@ def tela_banco(page: ft.Page, usuario: str, on_sucesso):
             txt_erro.visible = True
             page.update()
             return
-
-        import os
-
-        os.environ["DB_NAME"] = banco
-
-        from engine import conexao as cx
-
-        cx._pool = None
-
         txt_erro.visible = False
         on_sucesso(banco)
 
@@ -97,6 +120,7 @@ def tela_banco(page: ft.Page, usuario: str, on_sucesso):
                     tema.titulo_logo(),
                     ft.Container(height=24),
                     dropdown,
+                    txt_conexao,
                     txt_erro,
                     ft.Container(height=4),
                     btn,

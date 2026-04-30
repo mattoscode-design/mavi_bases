@@ -254,12 +254,17 @@ def tela_resultado(
                     txt_salvo.visible = True
                     page.update()
                     return
+                serie_txt = df_out[col].astype(str).str.strip()
+                mask_nao_registrado = df_out[col].isna() | serie_txt.str.upper().isin(
+                    {"", "NÃO ENCONTRADO", "NAO ENCONTRADO", "NAN", "NONE"}
+                )
+
                 valores = [
                     v
-                    for v in df_out[col].dropna().unique()
-                    if str(v).strip() not in ("", "NÃO ENCONTRADO", "nan")
+                    for v in df_out.loc[~mask_nao_registrado, col].dropna().unique()
+                    if str(v).strip()
                 ]
-                if not valores:
+                if not valores and not mask_nao_registrado.any():
                     txt_salvo.value = "Nenhum varejista encontrado para separar."
                     txt_salvo.visible = True
                     page.update()
@@ -275,6 +280,17 @@ def tela_resultado(
                     dst = os.path.join(pasta_base, nome_dest)
                     df_var = df_out[df_out[col] == var]
                     df_var.to_excel(dst, index=False)
+                    salvos.append(nome_dest)
+
+                if mask_nao_registrado.any():
+                    nome_dest = (
+                        f"NAO_REGISTRADO_{mes_ref}.xlsx"
+                        if mes_ref
+                        else "NAO_REGISTRADO_BASE.xlsx"
+                    )
+                    dst = os.path.join(pasta_base, nome_dest)
+                    df_nao = df_out[mask_nao_registrado]
+                    df_nao.to_excel(dst, index=False)
                     salvos.append(nome_dest)
                 try:
                     os.remove(arquivo_state[0])
@@ -307,29 +323,150 @@ def tela_resultado(
             ),
         )
 
+        card_sucesso = ft.Container(
+            content=ft.Row(
+                [
+                    ft.Icon(ft.Icons.CHECK_CIRCLE, color=tema.TEAL, size=36),
+                    ft.Column(
+                        [
+                            ft.Text(
+                                nome_varejista.upper(),
+                                size=15,
+                                weight=ft.FontWeight.W_700,
+                                color=tema.TEXT,
+                            ),
+                            ft.Text(
+                                f"processado com sucesso{' — ' + mes_ref if mes_ref else ''}",
+                                size=12,
+                                color=tema.TEXT_MUTED,
+                            ),
+                        ],
+                        spacing=2,
+                        expand=True,
+                    ),
+                ],
+                spacing=14,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            bgcolor=tema.BG2,
+            border=ft.border.all(1.5, tema.TEAL),
+            border_radius=12,
+            padding=ft.padding.symmetric(horizontal=20, vertical=14),
+            width=560,
+        )
+
+        # ── Dois cards lado a lado ────────────────────────────────────────────
+        def _info_row(label, valor, cor=None):
+            return ft.Row(
+                [
+                    ft.Text(label, size=12, color=tema.TEXT_MUTED, expand=True),
+                    ft.Text(
+                        valor,
+                        size=13,
+                        weight=ft.FontWeight.W_600,
+                        color=cor or tema.TEXT,
+                    ),
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            )
+
+        card_lojas = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text(
+                        "PROCESSAMENTO",
+                        size=10,
+                        color=tema.TEXT_MUTED,
+                        weight=ft.FontWeight.W_600,
+                    ),
+                    ft.Divider(height=8, color=tema.BORDER),
+                    _info_row("Linhas na base", fmt_num(total_linhas)),
+                    _info_row("Lojas identificadas", str(lojas_ok), cor=tema.TEAL),
+                    _info_row(
+                        "Lojas pendentes",
+                        str(lojas_novas),
+                        cor=tema.WARN if lojas_novas else tema.TEXT,
+                    ),
+                ],
+                spacing=8,
+            ),
+            bgcolor=tema.BG2,
+            border=ft.border.all(1, tema.BORDER),
+            border_radius=12,
+            padding=ft.padding.symmetric(horizontal=16, vertical=14),
+            expand=True,
+        )
+
+        card_valores = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text(
+                        "VALORES",
+                        size=10,
+                        color=tema.TEXT_MUTED,
+                        weight=ft.FontWeight.W_600,
+                    ),
+                    ft.Divider(height=8, color=tema.BORDER),
+                    _info_row(
+                        "Total valor",
+                        fmt_valor(total_valor) if total_valor else "—",
+                        cor=tema.TEAL if total_valor else None,
+                    ),
+                    _info_row(
+                        "Total quantidade",
+                        fmt_num(total_quantidade) if total_quantidade else "—",
+                        cor=tema.TEAL if total_quantidade else None,
+                    ),
+                    _info_row("Lojas únicas", str(lojas_unicas)),
+                ],
+                spacing=8,
+            ),
+            bgcolor=tema.BG2,
+            border=ft.border.all(1, tema.BORDER),
+            border_radius=12,
+            padding=ft.padding.symmetric(horizontal=16, vertical=14),
+            expand=True,
+        )
+
+        grid_stats = ft.Container(
+            content=ft.Row(
+                [card_lojas, card_valores],
+                spacing=10,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            ),
+            width=560,
+        )
+
+        card_download = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [btn_salvar]
+                        + ([btn_salvar_por_var] if coluna_varejista_saida else []),
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        spacing=12,
+                        wrap=True,
+                    ),
+                    txt_salvo,
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=10,
+            ),
+            bgcolor=tema.BG2,
+            border=ft.border.all(1, tema.BORDER),
+            border_radius=12,
+            padding=ft.padding.symmetric(horizontal=20, vertical=16),
+            width=560,
+        )
+
         corpo = ft.Column(
             [
-                ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=tema.TEAL, size=44),
-                ft.Text(
-                    f"{nome_varejista.upper()} processado com sucesso",
-                    size=15,
-                    weight=ft.FontWeight.W_500,
-                    color=tema.TEXT,
-                ),
-                ft.Container(height=4),
-                stats_row1,
-                stats_row2,
+                card_sucesso,
+                grid_stats,
                 setores_widget,
                 aviso_varejistas,
                 aviso_lojas,
-                ft.Container(height=4),
-                ft.Row(
-                    [btn_salvar, btn_salvar_por_var],
-                    alignment=ft.MainAxisAlignment.CENTER,
-                    spacing=12,
-                    wrap=True,
-                ),
-                txt_salvo,
+                card_download,
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=10,

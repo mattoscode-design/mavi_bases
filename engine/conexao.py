@@ -1,19 +1,31 @@
 import mysql.connector
+import threading
 from mysql.connector import Error, pooling
 from config import DB_CONFIG
 
 # Pool de conexões para reutilizar sem abrir/fechar a cada query
 _pool = None
+_lock = threading.Lock()
+
+
+def configurar_banco(nome_banco: str) -> None:
+    """Atualiza o banco alvo do pool de forma thread-safe."""
+    global _pool
+    import os
+
+    with _lock:
+        os.environ["DB_NAME"] = nome_banco
+        _pool = None  # será recriado na próxima chamada
+
 
 def get_pool():
     global _pool
-    if _pool is None:
-        _pool = pooling.MySQLConnectionPool(
-            pool_name="agente_pool",
-            pool_size=5,
-            **DB_CONFIG
-        )
-    return _pool
+    with _lock:
+        if _pool is None:
+            _pool = pooling.MySQLConnectionPool(
+                pool_name="agente_pool", pool_size=5, connection_timeout=10, **DB_CONFIG
+            )
+        return _pool
 
 
 def get_conexao():

@@ -254,6 +254,7 @@ def abrir_gerenciador_grupos(page: ft.Page):
 def tela_mapeamento(page: ft.Page, banco: str, on_voltar):
     """Tela principal de configuração — seleção de varejista + upload."""
     varejistas = buscar_varejistas()
+    cods_destino = []
 
     dd_varejista = ft.Dropdown(
         label="Varejista",
@@ -269,6 +270,102 @@ def tela_mapeamento(page: ft.Page, banco: str, on_voltar):
         text_style=ft.TextStyle(color=tema.TEXT, size=14),
         border_radius=8,
     )
+
+    btn_destinos = ft.OutlinedButton(
+        "Aplicar em 1 varejista",
+        style=ft.ButtonStyle(
+            color=tema.TEAL,
+            side=ft.BorderSide(color=tema.TEAL, width=1),
+            shape=ft.RoundedRectangleBorder(radius=8),
+        ),
+    )
+
+    def _atualizar_label_destinos():
+        qtd = len(cods_destino)
+        btn_destinos.text = (
+            f"Aplicar em {qtd} varejista"
+            if qtd == 1
+            else f"Aplicar em {qtd} varejistas"
+        )
+
+    def _on_varejista_change(e):
+        cods_destino.clear()
+        if e.control.value and e.control.value.isdigit():
+            cods_destino.append(int(e.control.value))
+        _atualizar_label_destinos()
+        page.update()
+
+    dd_varejista.on_change = _on_varejista_change
+
+    def _abrir_picker_destinos(e):
+        if not dd_varejista.value or not dd_varejista.value.isdigit():
+            tema.snackbar_erro(page, "Selecione primeiro um varejista base.")
+            return
+
+        cod_base = int(dd_varejista.value)
+        selecionados = set(cods_destino) if cods_destino else {cod_base}
+        selecionados.add(cod_base)
+
+        checkboxes = [
+            (
+                v["cod_varejista"],
+                ft.Checkbox(
+                    label=v["nome_varejista"],
+                    value=v["cod_varejista"] in selecionados,
+                    active_color=tema.TEAL,
+                ),
+            )
+            for v in varejistas
+        ]
+
+        for cod, cb in checkboxes:
+            if cod == cod_base:
+                cb.value = True
+                cb.disabled = True
+
+        dlg = [None]
+
+        def _fechar():
+            dlg[0].open = False
+            page.update()
+
+        def _confirmar(_ev):
+            novos = [cod for cod, cb in checkboxes if cb.value]
+            if cod_base not in novos:
+                novos.append(cod_base)
+            cods_destino[:] = sorted(set(novos))
+            _atualizar_label_destinos()
+            _fechar()
+
+        dlg[0] = ft.AlertDialog(
+            title=ft.Text("Selecionar varejistas de destino"),
+            content=ft.Column(
+                [
+                    ft.Text(
+                        "A configuração será salva para todos selecionados.",
+                        size=11,
+                        color=tema.TEXT_MUTED,
+                    ),
+                    ft.Column(
+                        [cb for _, cb in checkboxes],
+                        scroll=ft.ScrollMode.AUTO,
+                        height=max(120, min(260, len(checkboxes) * 38)),
+                    ),
+                ],
+                width=420,
+                spacing=8,
+            ),
+            actions=[
+                ft.TextButton("Confirmar", on_click=_confirmar),
+                ft.TextButton("Cancelar", on_click=lambda _ev: _fechar()),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.overlay.append(dlg[0])
+        dlg[0].open = True
+        page.update()
+
+    btn_destinos.on_click = _abrir_picker_destinos
 
     txt_arquivo = ft.Text("Nenhum arquivo selecionado", size=13, color=tema.TEXT_MUTED)
     arquivo_path = [None]
@@ -339,9 +436,16 @@ def tela_mapeamento(page: ft.Page, banco: str, on_voltar):
 
         try:
             cod_var = int(dd_varejista.value)
+            if cod_var not in cods_destino:
+                cods_destino[:] = [cod_var]
+                _atualizar_label_destinos()
+
             nome_var = next(
                 o.text for o in dd_varejista.options if o.key == dd_varejista.value
             )
+            nomes_destino = [
+                o.text for o in dd_varejista.options if int(o.key) in set(cods_destino)
+            ]
             df = pd.read_excel(arquivo_path[0], nrows=3, dtype=str)
             colunas = list(df.columns.str.strip())
             amostra = df.head(3).fillna("").values.tolist()
@@ -358,6 +462,8 @@ def tela_mapeamento(page: ft.Page, banco: str, on_voltar):
                 colunas,
                 amostra,
                 mapeamento_salvo,
+                cods_destino,
+                nomes_destino,
                 on_voltar,
             )
         except Exception as ex:
@@ -378,6 +484,8 @@ def tela_mapeamento(page: ft.Page, banco: str, on_voltar):
                     [
                         ft.Container(height=16),
                         dd_varejista,
+                        ft.Container(height=4),
+                        btn_destinos,
                         ft.Container(height=8),
                         area_arquivo,
                         txt_erro,
@@ -404,6 +512,8 @@ def _abrir_configurador(
     colunas,
     amostra,
     mapeamento_salvo,
+    cods_destino,
+    nomes_destino,
     on_voltar_principal,
 ):
     """Tela de configuração das colunas."""
@@ -855,13 +965,25 @@ def _abrir_configurador(
 
             if e.control.value == "separar_mes_ano":
                 inp.hint_text = "ex: MÊS|ANO"
+                if not (inp.value or "").strip():
+                    inp.value = "MÊS|ANO"
             elif e.control.value == "cruzar_ean":
                 inp.hint_text = "ex: SETOR_PRODUTO"
+                if not (inp.value or "").strip():
+                    inp.value = "SETOR_PRODUTO"
             elif e.control.value == "calcular_quantidade":
                 inp.hint_text = "ex: QUANTIDADE"
                 formula_inp.hint_text = "ex: VALOR/Preco Unit"
+                if not (inp.value or "").strip():
+                    inp.value = "QUANTIDADE"
             elif e.control.value == "cruzar_varejista":
                 inp.hint_text = "ex: VAREJISTA_BANCO"
+                if not (inp.value or "").strip():
+                    inp.value = "VAREJISTA_BANCO"
+            elif e.control.value == "renomear":
+                inp.hint_text = "novo nome..."
+                if not (inp.value or "").strip():
+                    inp.value = col
             else:
                 inp.hint_text = "novo nome..."
             page.update()
@@ -1195,8 +1317,16 @@ def _abrir_configurador(
                 }
             )
         try:
-            salvar_mapeamento(cod_varejista, colunas_payload)
-            txt_salvo.value = "✅ Configuração salva!"
+            destinos = sorted(set(cods_destino or [cod_varejista]))
+            for cod_destino in destinos:
+                salvar_mapeamento(cod_destino, colunas_payload)
+
+            if len(destinos) > 1:
+                txt_salvo.value = (
+                    f"✅ Configuração salva para {len(destinos)} varejistas!"
+                )
+            else:
+                txt_salvo.value = "✅ Configuração salva!"
             txt_salvo.visible = True
             page.update()
         except Exception as ex:
@@ -1216,6 +1346,11 @@ def _abrir_configurador(
                         color=tema.TEXT_MUTED,
                         weight=ft.FontWeight.W_500,
                         expand=True,
+                    ),
+                    ft.Text(
+                        f"Destinos: {len(cods_destino or [cod_varejista])}",
+                        size=12,
+                        color=tema.TEXT_MUTED,
                     ),
                     btn_grupos,
                 ],
